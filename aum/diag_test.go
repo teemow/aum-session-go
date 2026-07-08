@@ -1834,8 +1834,9 @@ func TestDiagNewCorpusInventory(t *testing.T) {
 
 // baseSession returns the real session to stage experiments on: the file named
 // by AUM_BASE (default system_collapse, the smallest), opened from the sessions
-// dir. It fatals if the file is missing so a staging run fails loudly rather
-// than silently skipping.
+// dir. Like the other corpus readers it skips when the corpus is absent (e.g.
+// CI), and fatals on any other read error so a staging run on a populated rig
+// still fails loudly.
 func baseSession(t *testing.T) (*Session, []byte, string) {
 	t.Helper()
 	name := os.Getenv("AUM_BASE")
@@ -1843,6 +1844,9 @@ func baseSession(t *testing.T) (*Session, []byte, string) {
 		name = "system_collapse.aumproj"
 	}
 	data, err := os.ReadFile(filepath.Join(diagSessionsDir(), name))
+	if os.IsNotExist(err) {
+		t.Skipf("base session %s not in corpus: %v", name, err)
+	}
 	if err != nil {
 		t.Fatalf("read base %s: %v", name, err)
 	}
