@@ -797,10 +797,9 @@ func TestStageOurNodesRealState(t *testing.T) {
 // divergences between a node our builder synthesized and the real captureprobe
 // node of the same component.
 type nodeDiff struct {
-	t            *testing.T
-	xa, ya       *Archive
-	xName, yName string
-	diffs        []string
+	t      *testing.T
+	xa, ya *Archive
+	diffs  []string
 }
 
 func (d *nodeDiff) log(path, format string, args ...any) {
@@ -2386,9 +2385,9 @@ func fromScratchSpec(t *testing.T) (BuildSpec, device.ProbeComponent) {
 //
 //   - min     : core only (1 audio strip, 1 real node, no output/tap/conv/master)
 //   - master  : min + a master strip (Synth→bus0, master reads bus0→HW out) — the
-//               built-in routing nodes (BusDest/BusSource/HWOutput)
+//     built-in routing nodes (BusDest/BusSource/HWOutput)
 //   - tap     : min + a post-fader ProbeAudioTap (our own plugin — may be
-//               UNINSTALLED on the device)
+//     UNINSTALLED on the device)
 //   - conv    : min + the server CC convention (writes midiCtrlState mappings)
 //
 // Whichever variant CRASHES localizes the third defect; the rest LOAD.
