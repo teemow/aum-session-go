@@ -176,8 +176,9 @@ func TestDeriveRigRoundTrip(t *testing.T) {
 	if syn.Type.ID != "rigtest_synth" {
 		t.Fatalf("synth type id = %q, want rigtest_synth", syn.Type.ID)
 	}
-	if syn.MatchedProbe != "isem" {
-		t.Fatalf("synth matched probe = %q, want isem", syn.MatchedProbe)
+	// The staged probe id is midi-device's ProbeID: the whole component.
+	if syn.MatchedProbe != "aumu-i_s_e_m-_artu" {
+		t.Fatalf("synth matched probe = %q, want aumu-i_s_e_m-_artu", syn.MatchedProbe)
 	}
 	// The indexed param got enum labels from the probe dump.
 	mode, ok := syn.Type.Control("mode")
