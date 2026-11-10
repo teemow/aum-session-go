@@ -218,6 +218,11 @@ func DeriveRig(s *Session, idPrefix string, dumps []device.ProbeDump) (*Rig, err
 	// Stream the enabled mappings (already sorted by collection/target) into
 	// the session device and the per-node builds.
 	for _, m := range s.Mappings(false) {
+		// AUM nests a node's preset-load actions in a sub-collection of its
+		// slot; fold them back onto the slot so they land on the node's device.
+		if slotColl, ok := splitPresetLoad(m.Collection); ok {
+			m.Collection, m.Target = slotColl, presetLoadKey+"/"+m.Target
+		}
 		ctl, ok, reason := controlFromSpec(m)
 		if !ok {
 			rig.Skipped = append(rig.Skipped, RigSkipped{

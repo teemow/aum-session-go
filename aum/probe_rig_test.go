@@ -101,7 +101,7 @@ func TestAddProbeRig(t *testing.T) {
 
 	// Matrix merge: the pre-existing route and the new brain wire both survive.
 	assertConnection(t, rs, "Node:Chan0:Slot0:MIDI OUT", "BuiltIn:Keyboard")
-	assertConnection(t, rs, fmt.Sprintf("Node:Chan%d:Slot0:MIDI OUT", rep.BrainChannel), "BuiltIn:MIDI Control")
+	assertConnection(t, rs, fmt.Sprintf("Node:Chan%d:Slot0:ProbeMidiBrain", rep.BrainChannel), "BuiltIn:MIDI Control")
 
 	// Host config authored for both plugins.
 	if bs, ok := rs.nodeStateObj(rep.BrainChannel, 0); !ok {

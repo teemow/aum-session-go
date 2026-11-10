@@ -285,7 +285,7 @@ func (s *Session) mergeMIDIControlRoute(brainChannel, brainSlot int, brainName s
 	}
 
 	b := s.builder()
-	srcKey := fmt.Sprintf("Node:Chan%d:Slot%d:MIDI OUT", brainChannel, brainSlot)
+	srcKey := s.midiSourceKey(MIDIEndpoint{Channel: brainChannel, Slot: brainSlot})
 	dstKey := "BuiltIn:MIDI Control"
 	if brainName == "" {
 		brainName = "ProbeMidiBrain"
