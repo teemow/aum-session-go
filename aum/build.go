@@ -296,6 +296,8 @@ type BuildReport struct {
 	Routes      int      // MIDI routes authored into midiMatrixState
 }
 
+const channelControlVolume = "Volume"
+
 // channelControl is one strip-level mappable target and whether it is a
 // trigger (Mute/Solo/Rec) versus a continuous value (Volume).
 type channelControl struct {
@@ -308,7 +310,7 @@ type channelControl struct {
 // carry the full set; MIDI strips (no fader, no record) carry only mute/solo.
 var (
 	audioChannelControls = []channelControl{
-		{"Volume", false}, {"Mute", true}, {"Solo", true}, {"Rec enable", true},
+		{channelControlVolume, false}, {"Mute", true}, {"Solo", true}, {"Rec enable", true},
 		{"ScrollToChannel", true},
 	}
 	midiChannelControls = []channelControl{

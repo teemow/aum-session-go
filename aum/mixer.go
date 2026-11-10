@@ -155,7 +155,7 @@ func fptr(v float64) *float64 { return &v }
 
 var (
 	mixerStripControls = []mixerStripControl{
-		{"Volume", "level", device.ValueSpec{Type: device.ValueRange, Min: fptr(0), Max: fptr(127)}},
+		{channelControlVolume, "level", device.ValueSpec{Type: device.ValueRange, Min: fptr(0), Max: fptr(127)}},
 		{"Mute", "mute", device.ValueSpec{Type: device.ValueEnum, Values: map[string]int{"unmute": 0, "mute": 127}}},
 		{"Solo", "solo", device.ValueSpec{Type: device.ValueEnum, Values: map[string]int{"unsolo": 0, "solo": 127}}},
 		{"Rec enable", "rec", device.ValueSpec{Type: device.ValueEnum, Values: map[string]int{"disarm": 0, "arm": 127}}},

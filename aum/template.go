@@ -67,7 +67,7 @@ func Template() *Archive {
 
 	// --- midiCtrlState: a tree of placeholder leaves (specState, unassigned) ---
 	channelControls := newNSDict(b,
-		[]any{b.Intern("Volume"), b.Intern("Mute"), b.Intern("Solo"), b.Intern("Rec enable")},
+		[]any{b.Intern(channelControlVolume), b.Intern("Mute"), b.Intern("Solo"), b.Intern("Rec enable")},
 		[]any{
 			b.Intern(placeholderLeaf(b)),
 			b.Intern(placeholderLeaf(b)),
