@@ -1,6 +1,4 @@
 github.com/jessevdk/go-flags v1.4.0/go.mod h1:4FA24M0QyGHXBuZZK/XkWh8h0e1EYbRYJSGM75WSRxI=
-github.com/teemow/midi-device v0.2.0 h1:XrIzmHDS1XND78g8AWrDQ0UQFRFuFiqogeq3thpm3QA=
-github.com/teemow/midi-device v0.2.0/go.mod h1:pLwP3pDlGDZSQgq7taL6Je840wOBt8MvwPfAdNFeb/Y=
 github.com/teemow/midi-device v0.2.1-0.20261110075412-b5fc1a67afa3 h1:hWNPcQ0uqPjW+vUNcPTE3mxsbh/AFdMFia8yvEfqFD8=
 github.com/teemow/midi-device v0.2.1-0.20261110075412-b5fc1a67afa3/go.mod h1:pLwP3pDlGDZSQgq7taL6Je840wOBt8MvwPfAdNFeb/Y=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
