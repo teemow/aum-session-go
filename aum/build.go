@@ -67,14 +67,16 @@ type BuildSpec struct {
 // ChannelSpec is one mixer strip to author. Fader applies only to audio strips
 // (MIDI strips have no fader); a nil Fader on an audio strip defaults to unity.
 //
-// A strip is a slot chain split at the fader/output node (faderIndex): the
-// pre-fader slots are the optional built-in Source node followed by the hosted
-// AUv3 Nodes; the fader/output node is the Output routing node; the post-fader
-// slots are PostNodes followed by the optional Tap. So the standard instrument
-// strip [instrument, BusDest, tap] is Nodes=[instrument] + Output=Bus(0) + Tap,
-// and a master strip [BusSource(0), HWOutput, tap] is Source=Bus(0) +
-// Output=Hardware(0) + Tap. When Source/Output/Tap/PostNodes are all unset the
-// chain is just Nodes, in order (the original behaviour).
+// A strip's signal runs: the optional built-in Source, the hosted AUv3 Nodes
+// (the instrument and its pre-fader effects), the fader, the PostNodes, the
+// optional Tap, and out through the Output routing node. AUM stores that as
+// [source, output, inserts…] with faderIndex counting the inserts ahead of
+// the fader (see channelSlots), so a node's slot is not its place in the signal:
+// an instrument strip with two effects is stored [instrument, BusDest, effect,
+// effect]. The standard instrument strip [instrument, BusDest, tap] is
+// Nodes=[instrument] + Output=Bus(0) + Tap, and a master strip [BusSource(0),
+// HWOutput, tap] is Source=Bus(0) + Output=Hardware(0) + Tap. When
+// Source/Output/Tap/PostNodes are all unset the chain is just Nodes, in order.
 //
 // Source/Output/Tap/PostNodes apply to audio strips only; on a MIDI strip the
 // chain is always just Nodes (a MIDI-processor strip such as the brain has no
@@ -367,12 +369,25 @@ type slotDesc struct {
 }
 
 // channelSlots resolves a ChannelSpec into its ordered chain of slot
-// descriptors and the faderIndex (the chain position of the fader/output node,
-// i.e. the count of pre-fader slots). The order is: built-in Source, pre-fader
-// Nodes, the fader/output node, post-fader PostNodes, then the Tap. Source /
-// Output / PostNodes / Tap apply to audio strips only; a MIDI strip's chain is
-// just its Nodes. It builds no objects (no Builder needed) so both the node/
-// catalogue authoring and the convention assigner can share one slot map.
+// descriptors and the strip's faderIndex.
+//
+// AUM stores an audio strip's chain as [source, output, inserts…]: slot 0 is
+// what the strip starts from, slot 1 is its fader/output node whatever sits
+// there, and every insert follows from slot 2 in signal order. faderIndex is
+// the number of pre-fader inserts: the first faderIndex inserts sit before the
+// fader, the rest after it. (Measured on sessions AUM saved, where a strip
+// with n inserts ahead of its fader stores n, and on AUM's rendering of
+// authored ones: a strip stored as [instrument, effect, effect, bus
+// destination] loads with the first effect as its output node and the bus
+// destination as an insert; [bus source, output, limiter, tap] with faderIndex
+// 1 draws the limiter before the fader and the tap after it.)
+//
+// So a strip with an Output is laid out as: the head (the built-in Source, or
+// the first hosted Node), the Output, the remaining Nodes (pre-fader), then
+// PostNodes, AuxSends and the Tap (post-fader). A strip without an Output, and
+// every MIDI strip, is just its Source and Nodes in order. It builds no
+// objects (no Builder needed) so both the node/catalogue authoring and the
+// convention assigner can share one slot map.
 func channelSlots(ch ChannelSpec) ([]slotDesc, int) {
 	var slots []slotDesc
 	add := func(sd slotDesc) {
@@ -382,31 +397,54 @@ func channelSlots(ch ChannelSpec) ([]slotDesc, int) {
 
 	audio := ch.Kind != KindMIDI
 
+	// The chain's pre-fader nodes in signal order: the built-in source (if
+	// any), then the hosted nodes.
+	var pre []slotDesc
 	if audio && ch.Source != nil {
 		switch ch.Source.Kind {
 		case SourceHWInput:
-			add(slotDesc{builtin: builtinSlot{class: classHWInput, name: "HW Input", hwBusIndex: ch.Source.HWBusIndex, monoSelect: ch.Source.MonoSelect}})
+			pre = append(pre, slotDesc{builtin: builtinSlot{class: classHWInput, name: "HW Input", hwBusIndex: ch.Source.HWBusIndex, monoSelect: ch.Source.MonoSelect}})
 		case SourceBus:
-			add(slotDesc{builtin: builtinSlot{class: classBusSource, name: "Bus Source", busIndex: ch.Source.BusIndex}})
+			pre = append(pre, slotDesc{builtin: builtinSlot{class: classBusSource, name: "Bus Source", busIndex: ch.Source.BusIndex}})
 		case SourceFilePlayer:
-			add(slotDesc{builtin: builtinSlot{class: classFilePlayer, name: "File Player"}})
+			pre = append(pre, slotDesc{builtin: builtinSlot{class: classFilePlayer, name: "File Player"}})
 		}
 		// SourceInstrument / SourceNone author no built-in node; the hosted
 		// Nodes below head the chain.
 	}
-
 	for _, n := range ch.Nodes {
-		add(slotDesc{auv3: true, node: n})
+		pre = append(pre, slotDesc{auv3: true, node: n})
 	}
 
-	faderIndex := len(slots)
-
+	var output *slotDesc
 	if audio && ch.Output != nil {
 		switch ch.Output.Kind {
 		case OutputBus:
-			add(slotDesc{builtin: builtinSlot{class: classBusDest, name: "Bus Destination", busIndex: ch.Output.BusIndex}})
+			output = &slotDesc{builtin: builtinSlot{class: classBusDest, name: "Bus Destination", busIndex: ch.Output.BusIndex}}
 		case OutputHardware:
-			add(slotDesc{builtin: builtinSlot{class: classHWOutput, name: "HW Output", hwBusIndex: ch.Output.HWBusIndex, monoSelect: ch.Output.MonoSelect}})
+			output = &slotDesc{builtin: builtinSlot{class: classHWOutput, name: "HW Output", hwBusIndex: ch.Output.HWBusIndex, monoSelect: ch.Output.MonoSelect}}
+		}
+	}
+
+	var faderIndex int
+	if output != nil && len(pre) > 0 {
+		// [head, output, the rest of the pre-fader nodes]; the fader follows
+		// the last of them.
+		add(pre[0])
+		add(*output)
+		for _, sd := range pre[1:] {
+			add(sd)
+		}
+		faderIndex = len(pre) - 1
+	} else {
+		// No output node (or nothing to head the chain): the nodes in order,
+		// then the output if there is one.
+		for _, sd := range pre {
+			add(sd)
+		}
+		faderIndex = len(slots)
+		if output != nil {
+			add(*output)
 		}
 	}
 
@@ -575,8 +613,7 @@ func BuildSession(spec BuildSpec) (*Session, BuildReport, error) {
 				fader = *ch.Fader
 			}
 			fields["faderLevel"] = fader
-			// faderIndex marks the fader/output slot: pre-fader slots precede
-			// it, post-fader inserts (the tap) follow it.
+			// faderIndex places the fader among the inserts (see channelSlots).
 			fields["faderIndex"] = int64(faderIdxs[i])
 		}
 		strip := keyedObj(b, class, "AUMStrip", fields)
