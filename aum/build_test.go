@@ -530,8 +530,8 @@ func TestBuildSessionRouting(t *testing.T) {
 	}
 
 	// Routing matrix: brain → synth (slot0) + brain → MIDI Control.
-	assertConnection(t, s, "Node:Chan0:Slot0:MIDI OUT", "Node:Chan1:Slot0")
-	assertConnection(t, s, "Node:Chan0:Slot0:MIDI OUT", "BuiltIn:MIDI Control")
+	assertConnection(t, s, "Node:Chan0:Slot0:ProbeMidiBrain", "Node:Chan1:Slot0")
+	assertConnection(t, s, "Node:Chan0:Slot0:ProbeMidiBrain", "BuiltIn:MIDI Control")
 
 	// Fidelity gate: the authored routed graph round-trips graph-equal.
 	data, err := s.Archive().Encode()

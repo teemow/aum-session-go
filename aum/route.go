@@ -13,6 +13,8 @@ package aum
 import (
 	"fmt"
 	"sort"
+
+	"github.com/teemow/midi-device/device"
 )
 
 // MIDIEndpoint identifies one end of a MIDI route. A node endpoint is a hosted
@@ -23,6 +25,90 @@ type MIDIEndpoint struct {
 	Channel int
 	Slot    int
 	Builtin string
+
+	// Port is the source's MIDI-output port name (a From endpoint only). AUM
+	// keys a node source as "Node:Chan<C>:Slot<S>:<port>", where <port> is the
+	// name the AU declares for its MIDI output, and silently drops a route
+	// whose port name does not match. Empty picks the port of a component this
+	// library knows (ProbeMidiBrain) and otherwise the literal "MIDI OUT" label
+	// AUM uses for an AU that declares no named port. See MIDIOutPort.
+	Port string
+
+	// Filter is the destination's MIDI filter (a To endpoint only). nil passes
+	// everything. AUM stores one filter per destination, not per connection, so
+	// every route into one destination must agree on its filter.
+	Filter *MIDIFilter
+}
+
+// MIDIFilter is the filter AUM applies to everything arriving at one
+// destination of the MIDI matrix. The zero value passes everything.
+type MIDIFilter struct {
+	// Channels lists the 1-based MIDI channels that pass. Empty passes all 16.
+	Channels []int
+	// Transpose shifts passing notes by this many semitones.
+	Transpose int
+	// StartNote and EndNote bound the notes that pass. An EndNote of 0 means
+	// 127, so the zero value is the full range.
+	StartNote int
+	EndNote   int
+}
+
+// allMIDIChannels is the channelFilter value that passes all 16 channels.
+const allMIDIChannels = 0xFFFF
+
+// channelMask returns the filter's channelFilter bitmask: bit n-1 set lets MIDI
+// channel n pass (a destination filtered to channel 2 stores 2).
+func (f MIDIFilter) channelMask() (int64, error) {
+	if len(f.Channels) == 0 {
+		return allMIDIChannels, nil
+	}
+	var mask int64
+	for _, ch := range f.Channels {
+		if ch < 1 || ch > 16 {
+			return 0, fmt.Errorf("MIDI channel %d out of range (1..16)", ch)
+		}
+		mask |= 1 << (ch - 1)
+	}
+	return mask, nil
+}
+
+// fields returns the filter as the ordered key/value lists AUM stores.
+func (f MIDIFilter) fields() ([]any, []any, error) {
+	mask, err := f.channelMask()
+	if err != nil {
+		return nil, nil, err
+	}
+	endNote := f.EndNote
+	if endNote == 0 {
+		endNote = 127
+	}
+	if f.StartNote < 0 || f.StartNote > 127 || endNote < 0 || endNote > 127 || f.StartNote > endNote {
+		return nil, nil, fmt.Errorf("note range %d..%d is not within 0..127", f.StartNote, endNote)
+	}
+	keys := []string{"channelFilter", "transpose", "endNote", "skipByType", "skipCC1", "startNote", "skipCC0"}
+	vals := []int64{mask, int64(f.Transpose), int64(endNote), 0, 0, int64(f.StartNote), 0}
+	ks := make([]any, len(keys))
+	vs := make([]any, len(vals))
+	for i := range keys {
+		ks[i] = keys[i]
+		vs[i] = vals[i]
+	}
+	return ks, vs, nil
+}
+
+// equal reports whether two filters store the same values.
+func (f MIDIFilter) equal(o MIDIFilter) bool {
+	_, a, errA := f.fields()
+	_, b, errB := o.fields()
+	if errA != nil || errB != nil || len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // MIDIRoute connects one node's MIDI output (From, always a node) to one or
@@ -32,24 +118,51 @@ type MIDIRoute struct {
 	To   []MIDIEndpoint
 }
 
+// defaultMIDIOutPort is the port label AUM uses for a node whose AU declares no
+// named MIDI output.
+const defaultMIDIOutPort = "MIDI OUT"
+
+// MIDIOutPort returns the MIDI-output port name AUM keys a hosted component's
+// source by. An AU that declares a named output is keyed by that name; this
+// library knows the name of ProbeMidiBrain. Every other component gets the
+// "MIDI OUT" label AUM uses for an unnamed output, so a route from an AU that
+// names its output must set MIDIEndpoint.Port.
+func MIDIOutPort(c device.ProbeComponent) string {
+	if ComponentMatches(c, ProbeBrainNode().Component) {
+		return "ProbeMidiBrain"
+	}
+	return defaultMIDIOutPort
+}
+
+// midiSourceKey returns the matrix key of a node's MIDI output: the endpoint's
+// explicit Port, or the port MIDIOutPort derives from the hosted component.
+func (s *Session) midiSourceKey(from MIDIEndpoint) string {
+	port := from.Port
+	if port == "" {
+		port = defaultMIDIOutPort
+		if node, ok := s.nodeObj(from.Channel, from.Slot); ok {
+			if v, ok := s.rawField(node, "audioComponentDescription"); ok {
+				if comp, ok := s.decodeComponent(v); ok {
+					port = MIDIOutPort(comp)
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("Node:Chan%d:Slot%d:%s", from.Channel, from.Slot, port)
+}
+
 // defaultMIDIFilterFields is AUM's pass-through filter (all channels, full note
 // range, nothing skipped). See docs/research/aum-midi-matrix.md.
 func defaultMIDIFilterFields() ([]any, []any) {
-	keys := []string{"channelFilter", "transpose", "endNote", "skipByType", "skipCC1", "startNote", "skipCC0"}
-	vals := []int64{65535, 0, 127, 0, 0, 0, 0}
-	ks := make([]any, len(keys))
-	vs := make([]any, len(vals))
-	for i := range keys {
-		ks[i] = keys[i]
-		vs[i] = vals[i]
-	}
+	ks, vs, _ := MIDIFilter{}.fields()
 	return ks, vs
 }
 
 // SetMIDIRoutes (re)builds root["midiMatrixState"] from routes, replacing any
-// existing matrix. Each route's From must be a hosted node (its MIDI OUT is the
-// source); each To is a node (MIDI in) or a built-in. AUM applies the matrix on
-// load, so this is all the wiring the loop needs (brain -> synth, brain ->
+// existing matrix. Each route's From must be a hosted node (its MIDI output is
+// the source, see MIDIEndpoint.Port); each To is a node (MIDI in) or a
+// built-in, optionally filtered (MIDIEndpoint.Filter). AUM applies the matrix
+// on load, so this is all the wiring the loop needs (brain -> synth, brain ->
 // MIDI Control). Node endpoints are validated to exist.
 func (s *Session) SetMIDIRoutes(routes []MIDIRoute) error {
 	type infoEntry struct {
@@ -60,6 +173,7 @@ func (s *Session) SetMIDIRoutes(routes []MIDIRoute) error {
 	connOrder := []string{}              // stable source-key order
 	srcInfo := map[string]infoEntry{}
 	dstInfo := map[string]infoEntry{}
+	dstFilter := map[string]MIDIFilter{} // dest key -> its one filter
 
 	addConn := func(src, dst string) {
 		if _, seen := connections[src]; !seen {
@@ -81,7 +195,7 @@ func (s *Session) SetMIDIRoutes(routes []MIDIRoute) error {
 		if !ok {
 			return fmt.Errorf("aum: route %d From: no node at channel %d slot %d", ri, r.From.Channel, r.From.Slot)
 		}
-		srcKey := fmt.Sprintf("Node:Chan%d:Slot%d:MIDI OUT", r.From.Channel, r.From.Slot)
+		srcKey := s.midiSourceKey(r.From)
 		srcInfo[srcKey] = infoEntry{name: name, category: "Audio Unit"}
 
 		if len(r.To) == 0 {
@@ -100,6 +214,17 @@ func (s *Session) SetMIDIRoutes(routes []MIDIRoute) error {
 				dstKey = fmt.Sprintf("Node:Chan%d:Slot%d", dst.Channel, dst.Slot)
 				dstInfo[dstKey] = infoEntry{name: dname, category: "Audio Unit"}
 			}
+			filter := MIDIFilter{}
+			if dst.Filter != nil {
+				filter = *dst.Filter
+			}
+			if _, _, err := filter.fields(); err != nil {
+				return fmt.Errorf("aum: route %d To %d: %w", ri, di, err)
+			}
+			if prev, seen := dstFilter[dstKey]; seen && !prev.equal(filter) {
+				return fmt.Errorf("aum: route %d To %d: %s already has a different filter (AUM stores one filter per destination)", ri, di, dstKey)
+			}
+			dstFilter[dstKey] = filter
 			addConn(srcKey, dstKey)
 		}
 	}
@@ -139,7 +264,8 @@ func (s *Session) SetMIDIRoutes(routes []MIDIRoute) error {
 	sourcesInfo := buildInfo(srcInfo)
 	destsInfo := buildInfo(dstInfo)
 
-	// filters: one default pass-through filter per destination key.
+	// filters: one filter per destination key (pass-through unless a route set
+	// one).
 	dstKeys := make([]string, 0, len(dstInfo))
 	for k := range dstInfo {
 		dstKeys = append(dstKeys, k)
@@ -148,7 +274,7 @@ func (s *Session) SetMIDIRoutes(routes []MIDIRoute) error {
 	fKeys := make([]any, 0, len(dstKeys))
 	fObjs := make([]any, 0, len(dstKeys))
 	for _, k := range dstKeys {
-		fk, fv := defaultMIDIFilterFields()
+		fk, fv, _ := dstFilter[k].fields() // validated above
 		fkUIDs := make([]any, len(fk))
 		fvUIDs := make([]any, len(fv))
 		for i := range fk {

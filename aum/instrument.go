@@ -181,6 +181,8 @@ func (s *Session) Instrument(opts InstrumentOptions) (InstrumentReport, error) {
 			} else {
 				stripOther = append(stripOther, i)
 			}
+		case isPresetLoadCollection(coll):
+			presetLoad = append(presetLoad, i)
 		case isSlotCollection(coll):
 			switch {
 			case strings.HasPrefix(tgt, "_AUMNode:PresetLoadCtrl"):
@@ -422,6 +424,14 @@ func isSlotCollection(collection string) bool {
 	parts := strings.Split(collection, "/")
 	return len(parts) == 3 && parts[0] == "Channels" &&
 		strings.HasPrefix(parts[1], "chan") && strings.HasPrefix(parts[2], "slot")
+}
+
+// isPresetLoadCollection reports whether a collection path is a node slot's
+// preset-load sub-collection ("Channels/chanN/slotM/_AUMNode:PresetLoadCtrl"),
+// the shape AUM stores "Preset Load" actions in.
+func isPresetLoadCollection(collection string) bool {
+	_, ok := splitPresetLoad(collection)
+	return ok
 }
 
 // isReservedTarget reports whether a node-slot target is one of the reserved

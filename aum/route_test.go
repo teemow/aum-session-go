@@ -176,3 +176,124 @@ func nsLookupRaw(s *Session, dict map[string]any, key string) any {
 	}
 	return nil
 }
+
+// matrixFilter returns one field of a destination's filter in the session's
+// MIDI matrix.
+func matrixFilter(t *testing.T, s *Session, dstKey, field string) int {
+	t.Helper()
+	matrix := s.dict(s.root["midiMatrixState"])
+	filter := s.dict(s.dict(matrix["filters"])[dstKey])
+	if filter == nil {
+		t.Fatalf("no filter for %s", dstKey)
+	}
+	return s.intOr(filter[field], -1)
+}
+
+// multiTrackSpec authors the layout a multi-track song needs: the real
+// ProbeMidiBrain on a MIDI strip and two instruments on their own strips.
+func multiTrackSpec(routes []MIDIRoute) BuildSpec {
+	synth := func(subtype string) NodeSpec {
+		return NodeSpec{
+			Component:     device.ProbeComponent{Type: "aumu", Subtype: subtype, Manufacturer: "test"},
+			ComponentName: "Test: " + subtype,
+		}
+	}
+	return BuildSpec{
+		Channels: []ChannelSpec{
+			{Kind: KindMIDI, Title: "Brain", Nodes: []NodeSpec{ProbeBrainNode()}},
+			{Kind: KindAudio, Title: "Bass", Nodes: []NodeSpec{synth("Bas1")}},
+			{Kind: KindAudio, Title: "Lead", Nodes: []NodeSpec{synth("Led1")}},
+			{Kind: KindAudio, Title: "Master"},
+		},
+		Routes: routes,
+	}
+}
+
+// TestMIDIRouteSourcePort checks the source key carries the port name AUM
+// expects: ProbeMidiBrain's declared output, "MIDI OUT" for an unknown
+// component, and an explicit Port verbatim.
+func TestMIDIRouteSourcePort(t *testing.T) {
+	s, _, err := BuildSession(multiTrackSpec([]MIDIRoute{
+		{From: MIDIEndpoint{Channel: 0, Slot: 0}, To: []MIDIEndpoint{{Channel: 1, Slot: 0}}},
+		{From: MIDIEndpoint{Channel: 1, Slot: 0}, To: []MIDIEndpoint{{Builtin: "Keyboard"}}},
+		{From: MIDIEndpoint{Channel: 2, Slot: 0, Port: "Arp Out"}, To: []MIDIEndpoint{{Channel: 1, Slot: 0}}},
+	}))
+	if err != nil {
+		t.Fatalf("BuildSession: %v", err)
+	}
+	assertConnection(t, s, "Node:Chan0:Slot0:ProbeMidiBrain", "Node:Chan1:Slot0")
+	assertConnection(t, s, "Node:Chan1:Slot0:MIDI OUT", "BuiltIn:Keyboard")
+	assertConnection(t, s, "Node:Chan2:Slot0:Arp Out", "Node:Chan1:Slot0")
+}
+
+// TestMIDIRouteFilters checks a per-destination channel filter is stored as
+// AUM's bitmask (bit n-1 = channel n) and survives a round-trip, while an
+// unfiltered destination keeps the pass-through filter.
+func TestMIDIRouteFilters(t *testing.T) {
+	s, _, err := BuildSession(multiTrackSpec([]MIDIRoute{{
+		From: MIDIEndpoint{Channel: 0, Slot: 0},
+		To: []MIDIEndpoint{
+			{Channel: 1, Slot: 0, Filter: &MIDIFilter{Channels: []int{1}}},
+			{Channel: 2, Slot: 0, Filter: &MIDIFilter{Channels: []int{2}, Transpose: -12, StartNote: 36, EndNote: 96}},
+			{Builtin: "MIDI Control", Filter: &MIDIFilter{Channels: []int{15, 16}}},
+			{Builtin: "Keyboard"},
+		},
+	}}))
+	if err != nil {
+		t.Fatalf("BuildSession: %v", err)
+	}
+	data, err := s.Archive().Encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	re, err := Open(data)
+	if err != nil {
+		t.Fatalf("re-open: %v", err)
+	}
+
+	for _, tc := range []struct {
+		dst, field string
+		want       int
+	}{
+		{"Node:Chan1:Slot0", "channelFilter", 1},
+		{"Node:Chan1:Slot0", "endNote", 127},
+		{"Node:Chan2:Slot0", "channelFilter", 2},
+		{"Node:Chan2:Slot0", "transpose", -12},
+		{"Node:Chan2:Slot0", "startNote", 36},
+		{"Node:Chan2:Slot0", "endNote", 96},
+		{"BuiltIn:MIDI Control", "channelFilter", 1<<14 | 1<<15},
+		{"BuiltIn:Keyboard", "channelFilter", 0xFFFF},
+		{"BuiltIn:Keyboard", "skipByType", 0},
+	} {
+		if got := matrixFilter(t, re, tc.dst, tc.field); got != tc.want {
+			t.Errorf("%s %s = %d, want %d", tc.dst, tc.field, got, tc.want)
+		}
+	}
+}
+
+// TestMIDIRouteFilterErrors checks the two ways a filter can be wrong: values
+// outside MIDI's ranges, and two routes disagreeing about one destination.
+func TestMIDIRouteFilterErrors(t *testing.T) {
+	brain := MIDIEndpoint{Channel: 0, Slot: 0}
+	for name, routes := range map[string][]MIDIRoute{
+		"channel out of range": {{From: brain, To: []MIDIEndpoint{{Channel: 1, Slot: 0, Filter: &MIDIFilter{Channels: []int{17}}}}}},
+		"inverted note range":  {{From: brain, To: []MIDIEndpoint{{Channel: 1, Slot: 0, Filter: &MIDIFilter{StartNote: 80, EndNote: 40}}}}},
+		"conflicting filters": {
+			{From: brain, To: []MIDIEndpoint{{Channel: 1, Slot: 0, Filter: &MIDIFilter{Channels: []int{1}}}}},
+			{From: MIDIEndpoint{Channel: 2, Slot: 0}, To: []MIDIEndpoint{{Channel: 1, Slot: 0, Filter: &MIDIFilter{Channels: []int{2}}}}},
+		},
+	} {
+		if _, _, err := BuildSession(multiTrackSpec(routes)); err == nil {
+			t.Errorf("%s: BuildSession succeeded, want an error", name)
+		}
+	}
+
+	// Two routes may share a destination when they agree on its filter.
+	same := &MIDIFilter{Channels: []int{1}}
+	if _, _, err := BuildSession(multiTrackSpec([]MIDIRoute{
+		{From: brain, To: []MIDIEndpoint{{Channel: 1, Slot: 0, Filter: same}}},
+		{From: MIDIEndpoint{Channel: 2, Slot: 0}, To: []MIDIEndpoint{{Channel: 1, Slot: 0, Filter: same}}},
+	})); err != nil {
+		t.Errorf("agreeing filters: %v", err)
+	}
+}

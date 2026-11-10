@@ -227,7 +227,7 @@ func brainDests(s *Session) map[string]bool {
 		return out
 	}
 	conns := s.dict(matrix["connections"])
-	for _, d := range s.array(conns["Node:Chan0:Slot0:MIDI OUT"]) {
+	for _, d := range s.array(conns["Node:Chan0:Slot0:ProbeMidiBrain"]) {
 		out[s.str(d)] = true
 	}
 	return out
