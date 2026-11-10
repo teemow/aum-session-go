@@ -1,6 +1,7 @@
 package aum
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/teemow/midi-device/device"
@@ -466,7 +467,8 @@ func TestBuildSessionRouting(t *testing.T) {
 		t.Fatalf("channels = %d, want 4", len(chans))
 	}
 
-	// chan1 (instrument): [AUXNode synth, BusDest, AUXNode tap], faderIndex 1.
+	// chan1 (instrument): [AUXNode synth, BusDest, AUXNode tap], faderIndex 0:
+	// no insert ahead of the fader, the tap after it.
 	synthChain := chans[1].Nodes
 	wantClasses := []string{classAUXNode, classBusDest, classAUXNode}
 	if len(synthChain) != len(wantClasses) {
@@ -480,11 +482,13 @@ func TestBuildSessionRouting(t *testing.T) {
 	if tap := synthChain[2]; tap.Component == nil || tap.Component.Subtype != "pbAu" {
 		t.Fatalf("synth post-fader slot is not the tap: %+v", tap.Component)
 	}
-	assertStripInts(t, s, 1, 1, 3)
+	assertStripInts(t, s, 1, 0, 3)
 
-	// chan2 (HW input): [HWInput, AUXNode eq, BusDest, AUXNode tap], faderIndex 2.
+	// chan2 (HW input): AUM keeps the output at slot 1 and the inserts after
+	// it — [HWInput, BusDest, AUXNode eq, AUXNode tap] — with faderIndex 1:
+	// one insert (the eq) ahead of the fader, the tap after it.
 	vox := chans[2].Nodes
-	wantVox := []string{classHWInput, classAUXNode, classBusDest, classAUXNode}
+	wantVox := []string{classHWInput, classBusDest, classAUXNode, classAUXNode}
 	if len(vox) != len(wantVox) {
 		t.Fatalf("vocals chain length = %d, want %d", len(vox), len(wantVox))
 	}
@@ -493,9 +497,9 @@ func TestBuildSessionRouting(t *testing.T) {
 			t.Fatalf("vocals slot%d class = %q, want %q", i, vox[i].ArchiveDescClass, want)
 		}
 	}
-	assertStripInts(t, s, 2, 2, 4)
+	assertStripInts(t, s, 2, 1, 4)
 
-	// master: [BusSource, HWOutput, AUXNode tap], faderIndex 1.
+	// master: [BusSource, HWOutput, AUXNode tap], faderIndex 0.
 	master := chans[3].Nodes
 	wantMaster := []string{classBusSource, classHWOutput, classAUXNode}
 	for i, want := range wantMaster {
@@ -503,17 +507,17 @@ func TestBuildSessionRouting(t *testing.T) {
 			t.Fatalf("master slot%d class = %q, want %q", i, classAt(master, i), want)
 		}
 	}
-	assertStripInts(t, s, 3, 1, 3)
+	assertStripInts(t, s, 3, 0, 3)
 
 	// MIDI strip nodeCount tracks its single brain node.
 	assertNodeCount(t, s, 0, 1)
 
-	// Catalogue: the eq param sits at the HW-input channel's slot1 (shifted off
-	// slot0 by the built-in source), built-in routing slots carry _AUMNode:Bypass,
-	// and the post-fader tap slot is mappable.
+	// Catalogue: the eq param sits at the HW-input channel's slot2 (after the
+	// built-in source and the output), built-in routing slots carry
+	// _AUMNode:Bypass, and the post-fader tap slot is mappable.
 	all := s.Mappings(true)
 	for _, p := range []struct{ coll, target string }{
-		{"Channels/chan2/slot1", "freq"},            // eq param at shifted slot
+		{"Channels/chan2/slot2", "freq"},            // eq param at its insert slot
 		{"Channels/chan2/slot0", "_AUMNode:Bypass"}, // HWInput built-in slot
 		{"Channels/chan1/slot1", "_AUMNode:Bypass"}, // BusDest built-in slot
 		{"Channels/chan1/slot2", "_AUMNode:Bypass"}, // tap slot
@@ -557,8 +561,8 @@ func TestBuildSessionRouting(t *testing.T) {
 }
 
 // TestBuildSessionConventionShiftedSlot proves the convention assigns a node's
-// param CC at the node's true chain slot when a built-in source shifts it off
-// slot0 — the slot the catalogue uses too.
+// param CC at the node's true chain slot when a built-in source and the output
+// shift it off slot0 — the slot the catalogue uses too.
 func TestBuildSessionConventionShiftedSlot(t *testing.T) {
 	spec := routedSpec()
 	spec.Convention = &Convention{Channel: 1}
@@ -566,11 +570,11 @@ func TestBuildSessionConventionShiftedSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildSession: %v", err)
 	}
-	// The HW-input channel's eq param lives at slot1; its CC must be assigned
-	// there, not at slot0 (the built-in HWInput).
-	m, ok := s.FindMapping("Channels/chan2/slot1", "freq")
+	// The HW-input channel's eq param lives at slot2; its CC must be assigned
+	// there, not at slot0 (the built-in HWInput) or slot1 (the output).
+	m, ok := s.FindMapping("Channels/chan2/slot2", "freq")
 	if !ok {
-		t.Fatalf("eq freq mapping not found at chan2/slot1")
+		t.Fatalf("eq freq mapping not found at chan2/slot2")
 	}
 	if !m.Spec.Enabled || m.Spec.Type != TypeCC || m.Spec.Data1 != 30 {
 		t.Fatalf("eq freq spec = %+v, want enabled CC 30", m.Spec)
@@ -740,8 +744,8 @@ func TestBuildSessionAuxSend(t *testing.T) {
 	if tap := synth[3]; tap.Component == nil || tap.Component.Subtype != "pbAu" {
 		t.Fatalf("aux-send channel's last slot is not the tap: %+v", tap.Component)
 	}
-	// faderIndex stays at the output node (1); aux sends are post-fader.
-	assertStripInts(t, s, 1, 1, 4)
+	// No insert ahead of the fader (faderIndex 0); aux sends are post-fader.
+	assertStripInts(t, s, 1, 0, 4)
 
 	// The BusSend carries its routing bus + send amount in archiveNodeState.
 	send := chans[1].Nodes[2].obj
@@ -770,7 +774,7 @@ func TestBuildSessionFilePlayer(t *testing.T) {
 	}
 	chans := s.Channels()
 
-	// chan2 (Backing): [FilePlayer, BusDest(0), AUXNode tap], faderIndex 1.
+	// chan2 (Backing): [FilePlayer, BusDest(0), AUXNode tap], faderIndex 0.
 	backing := chans[2].Nodes
 	wantBacking := []string{classFilePlayer, classBusDest, classAUXNode}
 	if len(backing) != len(wantBacking) {
@@ -784,7 +788,7 @@ func TestBuildSessionFilePlayer(t *testing.T) {
 	if backing[0].Component != nil {
 		t.Fatalf("file player should carry no AUv3 component identity: %+v", backing[0].Component)
 	}
-	assertStripInts(t, s, 2, 1, 3)
+	assertStripInts(t, s, 2, 0, 3)
 }
 
 // TestBuildSessionNamedMixBusses asserts that MixBusses names/colors the listed
@@ -892,5 +896,60 @@ func TestValidateRenderGraph(t *testing.T) {
 				t.Fatalf("validateRenderGraph err = %v, wantErr = %v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestStripSlotOrder checks an instrument strip with pre-fader effects is
+// stored the way AUM stores it: the output at slot 1, the effects after it in
+// signal order, and faderIndex counting the pre-fader effects. Stored as
+// [instrument, effect, effect, output], AUM takes the first effect for the
+// output node.
+func TestStripSlotOrder(t *testing.T) {
+	node := func(typ, subtype string) NodeSpec {
+		return NodeSpec{
+			Component:     device.ProbeComponent{Type: typ, Subtype: subtype, Manufacturer: "test"},
+			ComponentName: "Test: " + subtype,
+			Params:        []device.ProbeParam{{Identifier: "p_" + subtype, Writable: true, Max: 1}},
+		}
+	}
+	s, _, err := BuildSession(BuildSpec{Channels: []ChannelSpec{
+		{
+			Kind: KindAudio, Title: "Pad",
+			Nodes:     []NodeSpec{node("aumu", "Syn1"), node("aufx", "Cho1"), node("aufx", "Rvb1")},
+			Output:    &ChannelOutput{Kind: OutputBus},
+			PostNodes: []NodeSpec{node("aufx", "Lim1")},
+			Tap:       true,
+		},
+		{Kind: KindAudio, Title: "Master", Source: &ChannelSource{Kind: SourceBus}, Output: &ChannelOutput{Kind: OutputHardware}},
+	}})
+	if err != nil {
+		t.Fatalf("BuildSession: %v", err)
+	}
+	pad := s.Channels()[0].Nodes
+	want := []string{"Syn1", "", "Cho1", "Rvb1", "Lim1", "pbAu"}
+	if len(pad) != len(want) {
+		t.Fatalf("pad chain has %d slots, want %d", len(pad), len(want))
+	}
+	for i, sub := range want {
+		got := ""
+		if pad[i].Component != nil {
+			got = pad[i].Component.Subtype
+		}
+		if got != sub {
+			t.Errorf("slot %d hosts %q, want %q", i, got, sub)
+		}
+	}
+	if pad[1].ArchiveDescClass != classBusDest {
+		t.Errorf("slot 1 is %s, want the output node", pad[1].ArchiveDescClass)
+	}
+	// Two effects ahead of the fader (slots 2 and 3); the limiter and the tap
+	// follow it.
+	assertStripInts(t, s, 0, 2, 6)
+	// The catalogue follows the stored slots.
+	all := s.Mappings(true)
+	for slot, target := range map[int]string{0: "p_Syn1", 2: "p_Cho1", 3: "p_Rvb1", 4: "p_Lim1"} {
+		if _, ok := findMapping(all, fmt.Sprintf("Channels/chan0/slot%d", slot), target); !ok {
+			t.Errorf("no %s at chan0/slot%d", target, slot)
+		}
 	}
 }

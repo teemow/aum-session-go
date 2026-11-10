@@ -517,7 +517,7 @@ func enumSpecFromLabels(labels []string) device.ValueSpec {
 // the same as the old mixer device).
 func stripControlMeta(target string) (string, *device.ValueSpec) {
 	switch target {
-	case "Volume":
+	case channelControlVolume:
 		return "level", rangeSpecPtr()
 	case "Mute":
 		return "mute", enumSpecPtr(map[string]int{"unmute": 0, "mute": 127})
