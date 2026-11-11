@@ -281,6 +281,12 @@ func (n Node) MatchProbe(dumps []device.ProbeDump) *device.ProbeDump {
 // slash-joined path of containers down to (but excluding) the leaf — e.g.
 // "Channels/chan0/Channel controls" — and Target is the leaf key (e.g.
 // "Volume"). Min/Max/AutoToggle are the leaf's input-range / cycle fields.
+//
+// A hosted node's parameter is keyed by its key path. In a flat parameter tree
+// that is the identifier and the leaf sits in the slot collection
+// ("Channels/chan0/slot0" / "cutoff"); a parameter inside groups sits in the
+// innermost group's collection ("Channels/chan0/slot0/a/a.b" / "a.b.c"). See
+// ParamRef.
 type Mapping struct {
 	Collection string
 	Target     string
