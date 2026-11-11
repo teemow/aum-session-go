@@ -276,3 +276,62 @@ func mappingSet(s *Session) map[string]bool {
 	}
 	return out
 }
+
+// TestInstrumentGroupedNode banks a session whose instrument has a parameter
+// tree with groups: every nested leaf is a parameter of that instrument and
+// gets a trigger, while the node's preset-load action, a sub-collection of the
+// same slot, still gets its Program Change.
+func TestInstrumentGroupedNode(t *testing.T) {
+	s, _, err := BuildSession(kitSpec())
+	if err != nil {
+		t.Fatalf("BuildSession: %v", err)
+	}
+	if err := s.AddPresetLoad(1, 0, PresetLoad{Name: "Tight Kit", Number: 3, Program: 9, Channel: 14}); err != nil {
+		t.Fatalf("AddPresetLoad: %v", err)
+	}
+	rep, err := s.Instrument(InstrumentOptions{UseNotes: true})
+	if err != nil {
+		t.Fatalf("Instrument: %v", err)
+	}
+	assertCollisionFree(t, s)
+	if len(rep.Overflow) != 0 {
+		t.Fatalf("unexpected overflow: %v", rep.Overflow)
+	}
+
+	params := kitParams()
+	writable := 0
+	for i, ref := range ParamRefs(params) {
+		if !params[i].Writable {
+			continue
+		}
+		writable++
+		m, ok := s.FindMapping(ref.Collection(kitSlot), ref.Target)
+		if !ok {
+			t.Fatalf("no leaf for %s", ref.Path())
+		}
+		// The banked pool: a CC on the start channel (stored 1).
+		if !m.Spec.Enabled || m.Spec.Type != SpecStateTypeCC || m.Spec.Channel != 1 {
+			t.Errorf("%s = %+v, want an enabled CC on stored channel 1", ref.Path(), m.Spec)
+		}
+	}
+	// The kit is the session's only node with parameters, so its writable ones
+	// are the whole instrument class and nothing was taken for an effect.
+	if got := rep.ByClass["instrument"]; got != writable {
+		t.Errorf("instrument class = %d, want the kit's %d writable parameters", got, writable)
+	}
+	if got := rep.ByClass["effect"]; got != 0 {
+		t.Errorf("effect class = %d, want 0", got)
+	}
+	if got := rep.ByClass["presetLoad"]; got != 1 {
+		t.Errorf("presetLoad class = %d, want the one preset-load action", got)
+	}
+	// Every leaf of the session is assigned: no nested leaf was left behind as
+	// an unknown collection.
+	if all, assigned := len(s.Mappings(true)), len(s.Mappings(false)); all != assigned {
+		t.Errorf("%d of %d leaves assigned", assigned, all)
+	}
+	loads := s.PresetLoads(1, 0)
+	if len(loads) != 1 || loads[0].Name != "Tight Kit" {
+		t.Errorf("PresetLoads = %+v, want the Tight Kit action", loads)
+	}
+}

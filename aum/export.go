@@ -21,6 +21,11 @@ package aum
 // the file's _collection_map_name (AUM's collection kind, e.g. "Session Load");
 // when blank it defaults to collectionPath. The returned Archive can be Encode()d
 // straight to a .aum_midimap file.
+//
+// Only the collection's own leaves are exported, not those of the collections
+// nested in it. For a node slot that leaves out the preset-load actions and,
+// for a plugin whose parameter tree has groups, the parameters inside groups
+// (each group is a collection of its own, see ParamRef).
 func (s *Session) ExportMidiMap(collectionPath, name string) (*Archive, error) {
 	if name == "" {
 		name = collectionPath

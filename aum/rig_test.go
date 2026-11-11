@@ -1,6 +1,7 @@
 package aum
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -246,5 +247,97 @@ func TestDeriveRigUnmappedNode(t *testing.T) {
 	}
 	if rig.Nodes[0].Type != nil {
 		t.Fatalf("unmapped node derived a type: %v", rig.Nodes[0].Type.ControlNames())
+	}
+}
+
+// TestDeriveRigGroupedNode maps parameters of a node whose parameter tree has
+// groups and checks the import puts them on that node's device: matched to
+// their probe parameters by key path, and named like the controls of a flat
+// tree, from the identifier and not from the key path. Without a probe dump
+// the names are the same, read off the leaf's place in its group.
+func TestDeriveRigGroupedNode(t *testing.T) {
+	built, _, err := BuildSession(kitSpec())
+	if err != nil {
+		t.Fatalf("BuildSession: %v", err)
+	}
+	refs := ParamRefs(kitParams())
+	// Parameter index -> CC: the decay of both voices, the indexed shape and
+	// the top-level swing.
+	mapped := []struct{ param, cc int }{{0, 20}, {1, 21}, {4, 22}, {6, 23}}
+	for _, mp := range mapped {
+		ref := refs[mp.param]
+		if err := built.SetMapping(ref.Collection(kitSlot), ref.Target, TypeCC, mp.cc, 10); err != nil {
+			t.Fatalf("SetMapping %s: %v", ref.Path(), err)
+		}
+	}
+	s := reopen(t, built)
+
+	tests := []struct {
+		name      string
+		dumps     []device.ProbeDump
+		wantProbe string
+	}{
+		{"with the probe dump", []device.ProbeDump{kitDump()}, device.ProbeID(kitDump())},
+		{"without a probe dump", nil, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rig, err := DeriveRig(s, "kit", tc.dumps)
+			if err != nil {
+				t.Fatalf("DeriveRig: %v", err)
+			}
+			// A nested leaf is the node's, not an unknown collection that falls
+			// to the session device.
+			if rig.Session != nil {
+				t.Fatalf("session device took controls: %v", rig.Session.ControlNames())
+			}
+			if len(rig.Skipped) != 0 {
+				t.Fatalf("skipped mappings: %+v", rig.Skipped)
+			}
+			if len(rig.Nodes) != 1 {
+				t.Fatalf("derived %d node(s), want the kit: %+v", len(rig.Nodes), rig.Nodes)
+			}
+			kit := rig.Nodes[0]
+			if kit.ChannelIndex != 1 || kit.Slot != 0 || kit.Type == nil {
+				t.Fatalf("kit node = chan%d/slot%d type %v, want chan1/slot0 with a type", kit.ChannelIndex, kit.Slot, kit.Type)
+			}
+			if kit.MatchedProbe != tc.wantProbe {
+				t.Fatalf("matched probe = %q, want %q", kit.MatchedProbe, tc.wantProbe)
+			}
+
+			// Mappings stream in collection order: the slot's own leaf, then
+			// voice 1, then voice 2, whose decay shares voice 1's identifier.
+			wantNames := []string{"swing", "decay", "shape", "decay_2"}
+			if got := kit.Type.ControlNames(); !reflect.DeepEqual(got, wantNames) {
+				t.Fatalf("control names = %v, want %v", got, wantNames)
+			}
+			for name, cc := range map[string]int{"decay": 20, "shape": 21, "decay_2": 22, "swing": 23} {
+				c, _ := kit.Type.Control(name)
+				if typ, data1, ch := wireOf(t, *c); typ != SpecStateTypeCC || data1 != cc || ch != 10 {
+					t.Errorf("%s = type%d %d stored ch%d, want CC %d stored ch10", name, typ, data1, ch, cc)
+				}
+			}
+			// The description points at the leaf the mapping lives in.
+			decay2, _ := kit.Type.Control("decay_2")
+			if want := kitSlot + "/kitParams/kitParams.voice2/kitParams.voice2.decay"; !strings.Contains(decay2.Description, want) {
+				t.Errorf("decay_2 description %q does not name its leaf %s", decay2.Description, want)
+			}
+
+			shape, _ := kit.Type.Control("shape")
+			if tc.dumps == nil {
+				if shape.Value.Type != device.ValueRange {
+					t.Errorf("shape value spec = %+v, want a plain range without a probe", shape.Value)
+				}
+				return
+			}
+			// Each leaf found its own probe parameter: the indexed one its
+			// labels, voice 2's decay its own display name.
+			if shape.Value.Type != device.ValueEnum || len(shape.Value.Values) != 2 {
+				t.Errorf("shape value spec = %+v, want the probe's 2-label enum", shape.Value)
+			}
+			if !strings.Contains(decay2.Description, "Decay 2") {
+				t.Errorf("decay_2 description %q is not from voice 2's probe parameter", decay2.Description)
+			}
+		})
 	}
 }

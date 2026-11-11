@@ -232,6 +232,19 @@ func DeriveRig(s *Session, idPrefix string, dumps []device.ProbeDump) (*Rig, err
 			continue
 		}
 
+		// AUM nests the parameters of a plugin whose parameter tree has groups
+		// in one collection per group below the node's slot (see ParamRef).
+		// Such a leaf belongs to the plugin at that slot like the slot's own
+		// leaves do. A built-in node has no parameter tree, so a collection
+		// below its slot stays an unknown one.
+		slotColl, groups := m.Collection, []string(nil)
+		if isParamGroupCollection(m.Collection) {
+			sc, sub, _ := splitSlotCollection(m.Collection)
+			if rs := slots[sc]; rs != nil && rs.kind != rigSlotBuiltin {
+				slotColl, groups = sc, sub
+			}
+		}
+
 		switch {
 		case m.Collection == "Transport":
 			nm, spec := transportControlMeta(m.Target)
@@ -256,8 +269,8 @@ func DeriveRig(s *Session, idPrefix string, dumps []device.ProbeDump) (*Rig, err
 			ctl.Name = device.UniqueName(ctl.Name, usedSession)
 			sessionType.Controls = append(sessionType.Controls, ctl)
 
-		case isSlotCollection(m.Collection):
-			rs := slots[m.Collection]
+		case isSlotCollection(slotColl):
+			rs := slots[slotColl]
 			switch {
 			case rs == nil || rs.kind == rigSlotBuiltin:
 				// Built-in routing-node knob (bus send, balance, file player …)
@@ -298,7 +311,7 @@ func DeriveRig(s *Session, idPrefix string, dumps []device.ProbeDump) (*Rig, err
 				sessionType.Controls = append(sessionType.Controls, ctl)
 
 			default: // rigSlotHosted
-				rs.node.addControl(ctl, m)
+				rs.node.addControl(ctl, m, groups)
 			}
 
 		default:
@@ -355,7 +368,14 @@ func DeriveRig(s *Session, idPrefix string, dumps []device.ProbeDump) (*Rig, err
 // addControl names and finishes one hosted-node mapping: reserved triggers and
 // preset PCs get their canonical names; param targets are matched against the
 // probe dump (when present) for enum labels and AU metadata.
-func (nb *rigNodeBuild) addControl(ctl device.Control, m Mapping) {
+//
+// groups are the group collections the leaf sits in below the node's slot
+// (none for a leaf of the slot collection itself). A leaf in a group is keyed
+// by its key path, the group's key path followed by the parameter's
+// identifier, and its control is named from that identifier alone: the name
+// the same parameter gets in a flat tree, where the identifier is the whole
+// key.
+func (nb *rigNodeBuild) addControl(ctl device.Control, m Mapping, groups []string) {
 	var nm string
 	var spec *device.ValueSpec
 	human := ""
@@ -379,9 +399,19 @@ func (nb *rigNodeBuild) addControl(ctl device.Control, m Mapping) {
 		nm, human = "show_hide", "Show / hide plugin UI"
 		spec = triggerSpecPtr()
 	default:
-		nm = sanitize.ID(m.Target)
+		p := nb.paramFor[m.Target]
+		key := m.Target
+		if len(groups) > 0 {
+			// What the key path has behind its group's is the identifier; the
+			// probe parameter, when one matched, says it outright.
+			key = strings.TrimPrefix(key, groups[len(groups)-1]+".")
+			if p != nil {
+				key = device.FirstNonEmpty(p.Identifier, p.DisplayName, key)
+			}
+		}
+		nm = sanitize.ID(key)
 		human = "Param " + m.Target
-		if p := nb.paramFor[m.Target]; p != nil {
+		if p != nil {
 			human = "Param " + device.FirstNonEmpty(p.DisplayName, p.Identifier, m.Target) + " [AU " + probeParamMeta(p) + "]"
 			if n := len(p.ValueStrings); n > 0 && n <= 8 && supportsValueEnum(ctl.Type) {
 				es := enumSpecFromLabels(p.ValueStrings)
@@ -622,23 +652,21 @@ func presetTargetName(target string) string {
 }
 
 // probeParamIndex indexes a dump's writable params by every key a session
-// mapping target may use: the authored target key (paramTarget + de-dup, what
-// BuildSession writes) plus the AU identifier/displayName/keyPath (what a real
-// AUM session keys node params by).
+// mapping target may use. First the key of the parameter's leaf (ParamRef: its
+// key path, which AUM keys the leaf by and BuildSession writes, including the
+// _2 de-dup suffix of a dump whose keys collide). A leaf nested in the groups
+// of a parameter tree carries that same key, so it finds its parameter here
+// whatever collection it sits in. Then the AU identifier/displayName/keyPath,
+// for a session whose leaf is keyed by one of those.
 func probeParamIndex(dump device.ProbeDump) map[string]*device.ProbeParam {
 	out := map[string]*device.ProbeParam{}
-	used := map[string]bool{}
+	refs := ParamRefs(dump.Parameters)
 	for i := range dump.Parameters {
 		p := &dump.Parameters[i]
 		if !p.Writable {
 			continue
 		}
-		// The authored catalogue key (exact, including the _2 de-dup suffix).
-		key := device.UniqueName(paramTarget(*p), used)
-		if _, taken := out[key]; !taken {
-			out[key] = p
-		}
-		for _, k := range []string{p.Identifier, p.DisplayName, p.KeyPath} {
+		for _, k := range []string{refs[i].Target, p.Identifier, p.DisplayName, p.KeyPath} {
 			if k == "" {
 				continue
 			}

@@ -218,7 +218,9 @@ type ChannelOutput struct {
 // (audioComponentDescription + componentName) is stamped from Component /
 // ComponentName, and its writable Params become the slot's mappable
 // midiCtrlState targets — exactly the data a probe dump carries, so
-// NodeSpecFromDump is the usual way to build one.
+// NodeSpecFromDump is the usual way to build one. ParamRefs(Params) says where
+// each parameter's target is: in the slot collection, or for a parameter tree
+// with groups in the group collections nested below it.
 type NodeSpec struct {
 	Component     device.ProbeComponent // {type,subtype,manufacturer} tuple → audioComponentDescription
 	ComponentName string                // human "Manufacturer: Plugin"
@@ -292,7 +294,7 @@ type BuildReport struct {
 	Nodes       int      // hosted AUv3 nodes authored
 	Targets     int      // placeholder mapping targets enumerated (the catalogue size)
 	AssignedCCs int      // convention CCs assigned (0 when Convention is nil)
-	Overflow    []string // node-parameter target paths beyond the convention CC cap
+	Overflow    []string // paths of the node-parameter leaves (slot collection + "/" + ParamRef.Path()) beyond the convention CC cap
 	Routes      int      // MIDI routes authored into midiMatrixState
 }
 
@@ -760,21 +762,29 @@ func buildChannelControls(b *Builder, ch ChannelSpec, report *BuildReport) map[s
 }
 
 // buildSlotCatalogue builds a hosted AUv3 node slot's collection: a value
-// placeholder per writable parameter (AUM only maps writable params) keyed by
-// the param's target name, the reserved bypass/show triggers, and the
-// _collection_map_name meta key (the node's name).
+// placeholder per writable parameter (AUM only maps writable params), the
+// reserved bypass/show triggers, and the _collection_map_name meta key (the
+// node's name).
+//
+// The parameters go where AUM keeps them (see ParamRef): a leaf is keyed by the
+// parameter's key path, and a parameter inside groups sits in one nested
+// collection per group, each keyed by that group's key path. A group's
+// collection holds leaves and subgroups only, without a meta key, as in a
+// session AUM saved. A flat parameter tree has no groups, so its leaves are
+// all in the slot collection itself.
 func buildSlotCatalogue(b *Builder, n NodeSpec, report *BuildReport) map[string]any {
-	keys := []any{}
-	objs := []any{}
-	used := map[string]bool{}
-	for _, p := range n.Params {
-		if !p.Writable {
-			continue
+	var params paramCollection
+	for _, ref := range ParamRefs(n.Params) {
+		if ref.Target == "" {
+			continue // not writable: no leaf
 		}
-		keys = append(keys, b.Intern(device.UniqueName(paramTarget(p), used)))
-		objs = append(objs, b.Intern(placeholderLeaf(b)))
-		report.Targets++
+		coll := &params
+		for _, g := range ref.Groups {
+			coll = coll.group(g)
+		}
+		coll.entries = append(coll.entries, paramEntry{key: ref.Target})
 	}
+	keys, objs := params.build(b, report)
 	for _, r := range nodeReservedTargets {
 		keys = append(keys, b.Intern(r))
 		objs = append(objs, b.Intern(placeholderLeaf(b)))
@@ -787,6 +797,54 @@ func buildSlotCatalogue(b *Builder, n NodeSpec, report *BuildReport) map[string]
 	keys = append(keys, b.Intern(collectionMapNameKey))
 	objs = append(objs, b.Intern(name))
 	return newNSDict(b, keys, objs)
+}
+
+// paramCollection is a node's parameter leaves and group collections in the
+// order they are written: the slot collection's own, or those of one group.
+type paramCollection struct {
+	entries []paramEntry
+	groups  map[string]*paramCollection
+}
+
+// paramEntry is one key of a paramCollection: a parameter leaf, or (group set)
+// the collection of a group.
+type paramEntry struct {
+	key   string
+	group *paramCollection
+}
+
+// group returns the collection of the group keyed key, adding it at the group's
+// first parameter.
+func (c *paramCollection) group(key string) *paramCollection {
+	if g, ok := c.groups[key]; ok {
+		return g
+	}
+	g := &paramCollection{}
+	if c.groups == nil {
+		c.groups = map[string]*paramCollection{}
+	}
+	c.groups[key] = g
+	c.entries = append(c.entries, paramEntry{key: key, group: g})
+	return g
+}
+
+// build interns the collection's entries, a placeholder per leaf and an
+// NSDictionary per group, and returns their parallel key/value UIDs. It counts
+// the leaves into report.Targets.
+func (c *paramCollection) build(b *Builder, report *BuildReport) (keys, objs []any) {
+	keys = make([]any, 0, len(c.entries))
+	objs = make([]any, 0, len(c.entries))
+	for _, e := range c.entries {
+		keys = append(keys, b.Intern(e.key))
+		if e.group != nil {
+			groupKeys, groupObjs := e.group.build(b, report)
+			objs = append(objs, b.Intern(newNSDict(b, groupKeys, groupObjs)))
+			continue
+		}
+		objs = append(objs, b.Intern(placeholderLeaf(b)))
+		report.Targets++
+	}
+	return keys, objs
 }
 
 // buildBuiltinSlotCatalogue builds a built-in routing node slot's collection.
@@ -904,18 +962,18 @@ func applyConvention(s *Session, spec BuildSpec, masterPos int, report *BuildRep
 				}
 			}
 
-			used := map[string]bool{}
+			// Each writable param's leaf is where the catalogue put it: in the
+			// slot collection, or in its groups' collections below it.
 			cc := startCC
-			for _, p := range sd.node.Params {
-				if !p.Writable {
-					continue
+			for _, ref := range ParamRefs(sd.node.Params) {
+				if ref.Target == "" {
+					continue // not writable: no leaf
 				}
-				target := device.UniqueName(paramTarget(p), used)
 				if cc > maxCC {
-					report.Overflow = append(report.Overflow, slotColl+"/"+target)
+					report.Overflow = append(report.Overflow, slotColl+"/"+ref.Path())
 					continue
 				}
-				if err := s.SetMapping(slotColl, target, TypeCC, cc, stored); err != nil {
+				if err := s.SetMapping(ref.Collection(slotColl), ref.Target, TypeCC, cc, stored); err != nil {
 					return err
 				}
 				report.AssignedCCs++
@@ -965,20 +1023,4 @@ func lastAudioIndex(channels []ChannelSpec) int {
 		}
 	}
 	return idx
-}
-
-// paramTarget is the midiCtrlState target key for a parameter, preferring the
-// stable AU identifier, then displayName, then keyPath, then a synthesized
-// addr-based name (mirroring how AUM keys node params by name/identifier).
-func paramTarget(p device.ProbeParam) string {
-	switch {
-	case p.Identifier != "":
-		return p.Identifier
-	case p.DisplayName != "":
-		return p.DisplayName
-	case p.KeyPath != "":
-		return p.KeyPath
-	default:
-		return fmt.Sprintf("param_%d", p.Address)
-	}
 }

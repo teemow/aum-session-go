@@ -194,6 +194,15 @@ func (s *Session) Instrument(opts InstrumentOptions) (InstrumentReport, error) {
 			default:
 				effect = append(effect, i)
 			}
+		case isParamGroupCollection(coll):
+			// A group of the node's parameter tree: its leaves are parameters
+			// of the node in that slot, like the ones in the slot collection.
+			slotColl, _, _ := splitSlotCollection(coll)
+			if compByColl[slotColl] == "aumu" {
+				instrument = append(instrument, i)
+			} else {
+				effect = append(effect, i)
+			}
 		default:
 			// Unknown collection: when not preserving, mark an enabled leaf
 			// occupied so the pool never lands on top of it (we don't reassign
@@ -421,9 +430,31 @@ func chanIndexOf(collection string) (int, bool) {
 // isSlotCollection reports whether a collection path is a node slot
 // ("Channels/chanN/slotM").
 func isSlotCollection(collection string) bool {
+	_, sub, ok := splitSlotCollection(collection)
+	return ok && len(sub) == 0
+}
+
+// splitSlotCollection splits a collection path at or below a node slot
+// ("Channels/chanN/slotM[/sub...]") into the slot's own collection and the
+// collections nested below it, outermost first. ok is false for a path that is
+// not at or below a slot.
+func splitSlotCollection(collection string) (slotCollection string, sub []string, ok bool) {
 	parts := strings.Split(collection, "/")
-	return len(parts) == 3 && parts[0] == "Channels" &&
-		strings.HasPrefix(parts[1], "chan") && strings.HasPrefix(parts[2], "slot")
+	if len(parts) < 3 || parts[0] != "Channels" ||
+		!strings.HasPrefix(parts[1], "chan") || !strings.HasPrefix(parts[2], "slot") {
+		return "", nil, false
+	}
+	return strings.Join(parts[:3], "/"), parts[3:], true
+}
+
+// isParamGroupCollection reports whether a collection path is a group of a
+// node's parameter tree: a collection nested below a slot, keyed by the
+// group's key path ("Channels/chanN/slotM/a/a.b", see ParamRef). The
+// sub-collections AUM keeps for a node itself are in its "_AUMNode:" namespace
+// (the preset-load actions) and are not parameter groups.
+func isParamGroupCollection(collection string) bool {
+	_, sub, ok := splitSlotCollection(collection)
+	return ok && len(sub) > 0 && !strings.HasPrefix(sub[0], "_AUMNode:")
 }
 
 // isPresetLoadCollection reports whether a collection path is a node slot's
