@@ -23,6 +23,7 @@ package aum
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/teemow/midi-device/device"
 )
@@ -104,6 +105,10 @@ type ChannelSpec struct {
 	// (post-fader inserts, e.g. master FX), in order, before the Tap.
 	PostNodes []NodeSpec
 
+	// Pan adds AUM's built-in panner after the fader and post effects,
+	// before sends and the tap. -1 is left, 0 centre, +1 right.
+	// nil authors no node, preserving sessions without pan.
+	Pan *float64
 	// AuxSends, when non-empty, authors post-fader BusSendDescription nodes —
 	// the aux sends a channel taps into additional mix buses while still
 	// flowing to its own Output (Neon Ghosts' input channels carry several).
@@ -359,6 +364,7 @@ type builtinSlot struct {
 	hwBusIndex int
 	monoSelect int
 	sendAmount float64 // classBusSend: the send level (BusSendAmount)
+	pan        float64 // classPan: PanPosition
 }
 
 // slotDesc is one resolved chain slot: either a hosted AUv3 node (auv3 true,
@@ -456,6 +462,9 @@ func channelSlots(ch ChannelSpec) ([]slotDesc, int) {
 		for _, n := range ch.PostNodes {
 			add(slotDesc{auv3: true, node: n})
 		}
+		if ch.Pan != nil {
+			add(slotDesc{builtin: builtinSlot{class: classPan, name: "Pan", pan: *ch.Pan}})
+		}
 		for _, snd := range ch.AuxSends {
 			add(slotDesc{builtin: builtinSlot{class: classBusSend, name: "Bus Send", busIndex: snd.BusIndex, sendAmount: snd.Amount}})
 		}
@@ -487,6 +496,8 @@ func buildBuiltinNode(b *Builder, s builtinSlot) map[string]any {
 		return buildBusDest(b, s.busIndex)
 	case classBusSource:
 		return buildBusSource(b, s.busIndex)
+	case classPan:
+		return buildPan(b, s.pan)
 	case classBusSend:
 		return buildBusSend(b, s.busIndex, s.sendAmount)
 	case classFilePlayer:
@@ -513,6 +524,9 @@ func componentProducesAudio(typ string) bool {
 // dangling input element that AUM dereferences during render.
 func validateRenderGraph(spec BuildSpec) error {
 	for i, ch := range spec.Channels {
+		if ch.Pan != nil && (ch.Kind != KindAudio || math.IsNaN(*ch.Pan) || math.IsInf(*ch.Pan, 0) || *ch.Pan < -1 || *ch.Pan > 1) {
+			return fmt.Errorf("channel %d: pan must be finite within -1..1 on an audio strip", i)
+		}
 		if ch.Kind != KindAudio {
 			continue
 		}
@@ -639,7 +653,7 @@ func BuildSession(spec BuildSpec) (*Session, BuildReport, error) {
 			if sd.auv3 {
 				collObjs = append(collObjs, b.Intern(buildSlotCatalogue(b, sd.node, &report)))
 			} else {
-				collObjs = append(collObjs, b.Intern(buildBuiltinSlotCatalogue(b, sd.builtin.name, &report)))
+				collObjs = append(collObjs, b.Intern(buildBuiltinSlotCatalogue(b, sd.builtin.name, &report, sd.builtin.targets()...)))
 			}
 		}
 		chanCollKeys = append(chanCollKeys, b.Intern(fmt.Sprintf("chan%d", i)))
@@ -848,16 +862,29 @@ func (c *paramCollection) build(b *Builder, report *BuildReport) (keys, objs []a
 }
 
 // buildBuiltinSlotCatalogue builds a built-in routing node slot's collection.
-// A built-in node has no mappable parameters; AUM still enumerates its single
-// reserved _AUMNode:Bypass trigger, plus the _collection_map_name meta key.
-func buildBuiltinSlotCatalogue(b *Builder, name string, report *BuildReport) map[string]any {
+// Every built-in node has the reserved _AUMNode:Bypass trigger and the
+// _collection_map_name meta key. Controllable nodes also supply their own
+// targets, such as the panner's Pan.
+func buildBuiltinSlotCatalogue(b *Builder, name string, report *BuildReport, targets ...string) map[string]any {
 	if name == "" {
 		name = "slot"
 	}
 	keys := []any{b.Intern("_AUMNode:Bypass"), b.Intern(collectionMapNameKey)}
 	objs := []any{b.Intern(placeholderLeaf(b)), b.Intern(name)}
 	report.Targets++
+	for _, target := range targets {
+		keys = append(keys, b.Intern(target))
+		objs = append(objs, b.Intern(placeholderLeaf(b)))
+		report.Targets++
+	}
 	return newNSDict(b, keys, objs)
+}
+
+func (s builtinSlot) targets() []string {
+	if s.class == classPan {
+		return []string{"Pan"}
+	}
+	return nil
 }
 
 // buildTransport builds the Transport collection: trigger placeholders for the
