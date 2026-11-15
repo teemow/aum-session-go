@@ -105,15 +105,15 @@ type ChannelSpec struct {
 	// (post-fader inserts, e.g. master FX), in order, before the Tap.
 	PostNodes []NodeSpec
 
+	// Pan adds AUM's built-in panner after the fader and post effects,
+	// before sends and the tap. -1 is left, 0 centre, +1 right.
+	// nil authors no node, preserving sessions without pan.
+	Pan *float64
 	// AuxSends, when non-empty, authors post-fader BusSendDescription nodes —
 	// the aux sends a channel taps into additional mix buses while still
 	// flowing to its own Output (Neon Ghosts' input channels carry several).
 	// They are placed in the post-fader region (after PostNodes, before the
 	// Tap, so the Tap remains the channel's last slot). Audio strips only.
-	// Pan adds AUM's built-in panner after the fader and post effects,
-	// before sends and the tap. -1 is left, 0 centre, +1 right.
-	// nil authors no node, preserving sessions without pan.
-	Pan      *float64
 	AuxSends []AuxSend
 
 	// Tap, when true, appends a post-fader ProbeAudioTap as the channel's last
@@ -862,8 +862,9 @@ func (c *paramCollection) build(b *Builder, report *BuildReport) (keys, objs []a
 }
 
 // buildBuiltinSlotCatalogue builds a built-in routing node slot's collection.
-// A built-in node has no mappable parameters; AUM still enumerates its single
-// reserved _AUMNode:Bypass trigger, plus the _collection_map_name meta key.
+// Every built-in node has the reserved _AUMNode:Bypass trigger and the
+// _collection_map_name meta key. Controllable nodes also supply their own
+// targets, such as the panner's Pan.
 func buildBuiltinSlotCatalogue(b *Builder, name string, report *BuildReport, targets ...string) map[string]any {
 	if name == "" {
 		name = "slot"
