@@ -43,6 +43,7 @@ const (
 	classBusDest      = "BusDestDescription"
 	classBusSource    = "BusSourceDescription"
 	classBusSend      = "BusSendDescription"
+	classPan          = "PanDescription"
 	classFilePlayer   = "FilePlayerNodeDescription"
 	classEmptySlot    = "$null" // the trailing add-effect slot
 	auStateDocVersion = 1       // AuStateDoc.version AUM stamps for hosted AUv3 nodes
@@ -578,4 +579,10 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// buildPan follows a PanDescription read from an AUM-saved v13 session:
+// no node-level fields beyond its class, and a PanPosition in node state.
+func buildPan(b *Builder, position float64) map[string]any {
+	return builtinNode(b, classPan, nil, map[string]any{"_version": uint64(1), "PanPosition": float32(position)})
 }
