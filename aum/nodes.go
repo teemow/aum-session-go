@@ -58,7 +58,7 @@ const (
 // always present (empty unless n.AuMainParam is set), matching the corpus.
 //
 // componentIcon carries the plugin's icon when n.ComponentIcon holds the
-// auv3-probe app's on-device capture (the bytes of an NSKeyedArchiver-archived
+// stagebox app's on-device capture (the bytes of an NSKeyedArchiver-archived
 // UIImage, byte-identical to what AUM stores). It is grafted verbatim (see
 // graftComponentIcon), reusing the same graft primitive AddProbeRig uses for
 // template nodes — shared class defs / trait collection / UID rewriting handled
@@ -124,7 +124,7 @@ func buildAUXNode(b *Builder, n NodeSpec, channel, slot int) map[string]any {
 }
 
 // graftComponentIcon decodes raw as a standalone NSKeyedArchiver archive (the
-// auv3-probe app's NSKeyedArchiver.archivedData(withRootObject: uiImage)) and
+// stagebox app's NSKeyedArchiver.archivedData(withRootObject: uiImage)) and
 // grafts its root UIImage subgraph into b's archive, returning the destination
 // UID to store as the node's componentIcon. ok is false when raw is empty or
 // not a decodable archive — the caller then omits componentIcon, so a missing

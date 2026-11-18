@@ -2,7 +2,7 @@
 
 Read, write, and build [AUM](https://kymatica.com/apps/aum) session files
 (`.aumproj`) and standalone MIDI maps (`.aum_midimap`) in Go. Extracted from
-[mcp-midi-controller](https://github.com/teemow/mcp-midi-controller): the AUM
+[roadie](https://github.com/teemow/roadie): the AUM
 project tooling — session parsing, the binary plist node tree, mixer/instrument
 modeling, and the graded-session builder.
 

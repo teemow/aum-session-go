@@ -9,7 +9,7 @@ package aum
 // dir, so both must bump the same counter.
 //
 // The counter is persisted as a ".rev" file inside the staging dir itself, so
-// it survives daemon restarts (the app's "last seen rev" stays meaningful) and
+// it survives server restarts (the app's "last seen rev" stays meaningful) and
 // naturally travels with the dir. The hidden name keeps it out of the staged
 // listing: WalkStaged skips non-session files and SafeRelPath rejects hidden
 // segments, so it can never be listed, downloaded, or deleted via the API.
