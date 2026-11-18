@@ -242,7 +242,7 @@ type NodeSpec struct {
 
 	// ComponentIcon, when non-empty, is the bytes of an
 	// NSKeyedArchiver-archived UIImage (the plugin's icon, captured on-device
-	// by the auv3-probe app) — exactly what a real AUXNodeDescription stores in
+	// by the stagebox app) — exactly what a real AUXNodeDescription stores in
 	// its componentIcon field. buildAUXNode Decodes it as a standalone archive
 	// and grafts the UIImage subgraph into the session. Empty for synthetic
 	// placeholder nodes (which have no probe), in which case the node carries no

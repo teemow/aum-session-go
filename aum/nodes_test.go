@@ -379,7 +379,7 @@ func TestBusesRoundTrip(t *testing.T) {
 }
 
 // archivedIcon builds a tiny standalone NSKeyedArchiver archive standing in for
-// the auv3-probe app's NSKeyedArchiver.archivedData(withRootObject: uiImage):
+// the stagebox app's NSKeyedArchiver.archivedData(withRootObject: uiImage):
 // a "UIImage"-class root carrying a PNG-ish data blob and an NSValue size, the
 // kind of subgraph graftComponentIcon must transplant. It returns the encoded
 // bytes (what a dump's componentIcon field holds).

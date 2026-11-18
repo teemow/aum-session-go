@@ -13,7 +13,7 @@ import (
 // diagSessionsDir locates the on-disk AUM sessions dir these diagnostic tests
 // read real reference sessions from. AUM_SESSIONS_DIR overrides it; otherwise
 // it mirrors the app's config.AUMSessionsDir() — ${XDG_STATE_HOME:-~/.local/
-// state}/mcp-midi-controller/aum-sessions — so the diagnostics resolve the same
+// state}/roadie/aum-sessions — so the diagnostics resolve the same
 // corpus when run against a populated rig. The tests that read a missing file
 // either skip or fatal on their own; this only points them at the right place.
 func diagSessionsDir() string {
@@ -25,7 +25,7 @@ func diagSessionsDir() string {
 		home, _ := os.UserHomeDir()
 		base = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(base, "mcp-midi-controller", "aum-sessions")
+	return filepath.Join(base, "roadie", "aum-sessions")
 }
 
 // sortedMapKeys returns the sorted keys of a decoded NSDict (after deref of its
@@ -1519,7 +1519,7 @@ func TestStageRealStateImmDoc(t *testing.T) {
 //
 //   - If this LOADS: a hosted node's componentIcon IS required after all; the
 //     from-scratch crash is the missing icon. Fix moves to capturing/grafting
-//     real icons (the auv3-probe app plan's contingency).
+//     real icons (the stagebox app plan's contingency).
 //   - If this STILL CRASHES: icon is exonerated too; the cause is invisible to
 //     graph-equality (a bplist-level encoding detail of freshly-built objects).
 //
@@ -2682,7 +2682,7 @@ func TestStageNoIconReal(t *testing.T) {
 //     node can carry just its identity. The crash is NOT the missing fullState.
 //   - CRASHES: AUM requires the plugin's real fullState to instantiate the node
 //     — from-scratch authoring of a third-party node is impossible without
-//     on-device state capture (the auv3-probe app plan), and only our OWN
+//     on-device state capture (the stagebox app plan), and only our OWN
 //     plugins (whose state we author) can be placed from scratch.
 //
 // Run: STAGE_IDSTATE=1 go test -run TestStageIdentityStateReal
@@ -2849,7 +2849,7 @@ func TestStageRealNodeOurWindow(t *testing.T) {
 //
 //   - CRASHES: confirms the rule — a from-scratch node must carry a real icon OR
 //     real state. Third-party nodes (we can author neither off-device) therefore
-//     need the on-device icon capture (auv3-probe app plan); our OWN plugins,
+//     need the on-device icon capture (stagebox app plan); our OWN plugins,
 //     whose AuStateDoc we author with a real config blob, should already qualify.
 //   - LOADS: the icon+identity combination is fine; the crash is in some other
 //     bookkeeping field our node sets differently (bisect prevWindowMode/

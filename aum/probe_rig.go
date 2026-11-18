@@ -20,7 +20,7 @@ package aum
 //     cross-channel audio bus authoring is needed.
 //
 // Both nodes' host config is authored into their archiveNodeState["AuStateDoc"]
-// (SetAuStateDoc) so they auto-dial the daemon on load. All appends keep the
+// (SetAuStateDoc) so they auto-dial the server on load. All appends keep the
 // position-aligned channels[] / nodeArchives[] arrays in lockstep and add the
 // matching midiCtrlState "chan<idx>"/"slot<n>" catalogue entries so the
 // instrument allocator and the read model see the new targets.
@@ -191,7 +191,7 @@ func (s *Session) AddProbeRig(opts ProbeRigOptions) (ProbeRigReport, error) {
 
 	// No host config is authored: the grafted nodes carry the template's
 	// AuStateDoc (tap streaming:true, a valid brain program) and both plugins
-	// auto-dial the daemon via Bonjour on load.
+	// auto-dial the server via Bonjour on load.
 	return rep, nil
 }
 
