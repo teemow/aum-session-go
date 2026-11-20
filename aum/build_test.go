@@ -953,3 +953,36 @@ func TestStripSlotOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionNotes sets an authored session's notes, keeps them across an
+// encode and a decode, and unsets them again as the "$null" reference AUM
+// writes for a session without notes.
+func TestSessionNotes(t *testing.T) {
+	s, _, err := BuildSession(buildTestSpec())
+	if err != nil {
+		t.Fatalf("BuildSession: %v", err)
+	}
+	if got := s.Notes(); got != "" {
+		t.Fatalf("authored notes = %q, want none", got)
+	}
+	const text = "Night Drive\nrevision 1a2b3c4d"
+	s.SetNotes(text)
+	data, err := s.Archive().Encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	got, err := Open(data)
+	if err != nil {
+		t.Fatalf("re-open: %v", err)
+	}
+	if got.Notes() != text {
+		t.Fatalf("notes after a round trip = %q, want %q", got.Notes(), text)
+	}
+	got.SetNotes("")
+	if u, ok := got.root["notes"].(UID); !ok || u != 0 {
+		t.Fatalf("unset notes = %#v, want the $null reference (UID 0)", got.root["notes"])
+	}
+	if got.Notes() != "" {
+		t.Fatalf("unset notes read %q", got.Notes())
+	}
+}

@@ -72,6 +72,21 @@ func (s *Session) Version() int { return int(s.scalarUint(s.root["version"])) }
 // committed artifacts (see the public-vs-private rule).
 func (s *Session) Title() string { return s.str(s.root["title"]) }
 
+// Notes returns the session's notes (AUMSession.notes): the text AUM shows
+// under NOTES in its main menu, or "" when the session has none.
+func (s *Session) Notes() string { return s.str(s.root["notes"]) }
+
+// SetNotes sets the session's notes, the text AUM shows under NOTES in its
+// main menu. "" unsets them as AUM does: the "$null" reference (UID 0),
+// never an NSNull instance, which AUM fails to load.
+func (s *Session) SetNotes(text string) {
+	if text == "" {
+		s.root["notes"] = UID(0)
+		return
+	}
+	s.setField(s.root, "notes", text)
+}
+
 // Encoding returns the mapping-leaf encoding this session's version uses.
 func (s *Session) Encoding() Encoding { return EncodingForVersion(s.Version()) }
 
