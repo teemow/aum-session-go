@@ -157,6 +157,65 @@ func TestNodeAuStateDoc(t *testing.T) {
 	}
 }
 
+func TestSetAndNodeAuStateValues(t *testing.T) {
+	s, _, err := BuildSession(loopSpec())
+	if err != nil {
+		t.Fatalf("BuildSession: %v", err)
+	}
+	// Empty synth node has no AuStateDoc -> empty non-nil map.
+	empty, err := s.NodeAuStateValues(1, 0)
+	if err != nil {
+		t.Fatalf("NodeAuStateValues empty: %v", err)
+	}
+	if empty == nil || len(empty) != 0 {
+		t.Fatalf("expected empty non-nil map, got %#v", empty)
+	}
+
+	// SetAuStateValues writes typed scalars and round-trips cleanly.
+	if err := s.SetAuStateValues(1, 0, map[string]any{
+		"BankName":       "Heavy Rock",
+		"Drumkit":        "Acoustic",
+		"MasterVolume":   0.5,
+		"BPM":            120.0,
+		"CurrentPattern": 0,
+		"HostSync":       false,
+		"SongEnabled":    false,
+	}); err != nil {
+		t.Fatalf("SetAuStateValues: %v", err)
+	}
+	data, err := s.Archive().Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	re, err := Open(data)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	got, err := re.NodeAuStateValues(1, 0)
+	if err != nil {
+		t.Fatalf("NodeAuStateValues: %v", err)
+	}
+	if got["BankName"] != "Heavy Rock" || got["Drumkit"] != "Acoustic" || got["MasterVolume"] != 0.5 || got["HostSync"] != false {
+		t.Fatalf("unexpected round-tripped StateValues: %#v", got)
+	}
+	if re.intOr(got["CurrentPattern"], -1) != 0 {
+		t.Fatalf("CurrentPattern = %#v, want 0", got["CurrentPattern"])
+	}
+
+	if err := s.SetAuStateValues(1, 0, nil); err == nil {
+		t.Error("expected error for empty SetAuStateValues")
+	}
+	if err := s.SetAuStateValues(1, 0, map[string]any{"bad": struct{}{}}); err == nil {
+		t.Error("expected error for unsupported value type")
+	}
+	if err := s.SetAuStateValues(9, 9, map[string]any{"k": "v"}); err == nil {
+		t.Error("expected error for missing node")
+	}
+	if _, err := re.NodeAuStateValues(9, 9); err == nil {
+		t.Error("expected error for missing node in NodeAuStateValues")
+	}
+}
+
 // nsLookup resolves an NSDictionary entry by key and dereferences it to a dict.
 func nsLookup(s *Session, dict map[string]any, key string) map[string]any {
 	return s.rawObj(nsLookupRaw(s, dict, key))

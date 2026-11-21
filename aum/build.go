@@ -237,6 +237,14 @@ type NodeSpec struct {
 	// key -> raw bytes (e.g. {"probeMidiBrainProgram": <JSON>}). Used to
 	// pre-configure our own plugins (brain program, tap host/streaming).
 	StateDoc map[string][]byte
+	// StateValues, when non-empty, adds typed plist values to the node's
+	// archiveNodeState["AuStateDoc"] alongside StateDoc (e.g. plugins whose
+	// fullState stores strings, booleans, numbers or raw bytes directly rather
+	// than a single opaque blob). Supported value types: string, bool, int,
+	// int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32,
+	// float64, []byte. Keys must not duplicate StateDoc or the component
+	// identity keys (type, subtype, manufacturer, version).
+	StateValues map[string]any
 	// Preset, when non-nil, sets the node's AuPresetCtrl (factory preset index).
 	Preset *int
 
@@ -524,6 +532,21 @@ func componentProducesAudio(typ string) bool {
 // dangling input element that AUM dereferences during render.
 func validateRenderGraph(spec BuildSpec) error {
 	for i, ch := range spec.Channels {
+		for j, n := range ch.Nodes {
+			if err := validateNodeState(n); err != nil {
+				return fmt.Errorf("channel %d node %d: %w", i, j, err)
+			}
+		}
+		for j, n := range ch.PostNodes {
+			if err := validateNodeState(n); err != nil {
+				return fmt.Errorf("channel %d post node %d: %w", i, j, err)
+			}
+		}
+		if ch.TapNode != nil {
+			if err := validateNodeState(*ch.TapNode); err != nil {
+				return fmt.Errorf("channel %d tap node: %w", i, err)
+			}
+		}
 		if ch.Pan != nil && (ch.Kind != KindAudio || math.IsNaN(*ch.Pan) || math.IsInf(*ch.Pan, 0) || *ch.Pan < -1 || *ch.Pan > 1) {
 			return fmt.Errorf("channel %d: pan must be finite within -1..1 on an audio strip", i)
 		}

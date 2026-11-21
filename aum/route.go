@@ -333,6 +333,75 @@ func (s *Session) SetAuStateDoc(channelIndex, slot int, entries map[string][]byt
 	return nil
 }
 
+// SetAuStateValues sets a hosted node's saved AU state (archiveNodeState
+// ["AuStateDoc"]) from typed plist values (string, bool, integer, float, or
+// []byte). Values are validated and normalized the same way as
+// NodeSpec.StateValues; AUM hands the resulting dictionary to the plugin's
+// fullState setter on load.
+func (s *Session) SetAuStateValues(channelIndex, slot int, entries map[string]any) error {
+	if len(entries) == 0 {
+		return fmt.Errorf("aum: SetAuStateValues needs at least one entry")
+	}
+	state, ok := s.nodeStateObj(channelIndex, slot)
+	if !ok {
+		return fmt.Errorf("aum: no node at channel %d slot %d", channelIndex, slot)
+	}
+	keys := make([]string, 0, len(entries))
+	for k := range entries {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	norm := make([]any, len(keys))
+	for i, k := range keys {
+		v, err := normalizeAuStateValue(entries[k])
+		if err != nil {
+			return fmt.Errorf("aum: SetAuStateValues[%q]: %w", k, err)
+		}
+		norm[i] = v
+	}
+	b := s.builder()
+	kUIDs := make([]any, 0, len(keys))
+	oUIDs := make([]any, 0, len(keys))
+	for i, k := range keys {
+		kUIDs = append(kUIDs, b.Intern(k))
+		oUIDs = append(oUIDs, b.Intern(norm[i]))
+	}
+	doc := newNSDict(b, kUIDs, oUIDs)
+	s.setField(state, "AuStateDoc", doc)
+	return nil
+}
+
+// NodeAuStateValues returns all non-identity entries of a hosted node's
+// archiveNodeState["AuStateDoc"] with their decoded Go values (dropping the
+// {type,subtype,manufacturer,version} identity keys). Byte-slice values are
+// copied. A node without AuStateDoc or with identity keys only returns an empty
+// (non-nil) map.
+func (s *Session) NodeAuStateValues(channelIndex, slot int) (map[string]any, error) {
+	state, ok := s.nodeStateObj(channelIndex, slot)
+	if !ok {
+		return nil, fmt.Errorf("aum: no node at channel %d slot %d", channelIndex, slot)
+	}
+	out := map[string]any{}
+	docRef, ok := s.rawField(state, "AuStateDoc")
+	if !ok {
+		return out, nil
+	}
+	doc := s.dict(docRef)
+	for k, v := range doc {
+		if isAuStateIdentityKey(k) {
+			continue
+		}
+		val := s.a.Deref(v)
+		if b, ok := val.([]byte); ok {
+			cp := make([]byte, len(b))
+			copy(cp, b)
+			val = cp
+		}
+		out[k] = val
+	}
+	return out, nil
+}
+
 // NodeAuStateDoc returns a hosted node's saved fullState as key -> bytes — the
 // non-identity entries of its archiveNodeState["AuStateDoc"] (the
 // {type,subtype,manufacturer,version} identity keys are dropped, since the
