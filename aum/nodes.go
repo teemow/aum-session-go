@@ -14,10 +14,10 @@ package aum
 //   - Hosted AUv3 nodes (buildAUXNode): archiveDescClass "AUXNodeDescription",
 //     a 20-byte audioComponentDescription with componentFlags 0x0e, the
 //     12-key archiveNodeState window/clock bookkeeping AUM always writes plus
-//     an optional AuStateDoc (included only when n.StateDoc has saved fullState
-//     entries, so plugins with no saved state keep their native factory
-//     defaults), and, when the probe dump captured one, the plugin's
-//     componentIcon (an archived UIImage grafted in verbatim).
+//     an optional AuStateDoc (included only when n.StateDoc or n.StateValues
+//     has saved fullState entries, so plugins with no saved state keep their
+//     native factory defaults), and, when the probe dump captured one, the
+//     plugin's componentIcon (an archived UIImage grafted in verbatim).
 //
 //   - Built-in routing nodes (buildHWInput/HWOutput/BusDest/BusSource/BusSend,
 //     the FilePlayer source and the empty slot): light nodes with no component
@@ -32,7 +32,11 @@ package aum
 // them), so these builders omit them; the channel/slot arguments are kept for
 // call-site symmetry and future window-bookkeeping use.
 
-import "slices"
+import (
+	"fmt"
+	"math"
+	"slices"
+)
 
 const (
 	// Built-in routing-node archiveDescClass strings (the corpus-confirmed AUM
@@ -52,15 +56,15 @@ const (
 // buildAUXNode authors one hosted AUv3 node (AUMNodeArchive) faithfully to what
 // AUM writes: the component identity (audioComponentDescription with flags
 // 0x0e), the human componentName, and archiveNodeState. AuStateDoc is included
-// only when n.StateDoc carries saved fullState entries (e.g. our plugins'
-// probeMidiBrainProgram / probeAudioTapConfig, or a captured default state):
-// writing an identity-only AuStateDoc causes AUM to call auAudioUnit.fullState
-// with an empty state dictionary, which zeroes out factory defaults on plugins
-// whose setFullState: reads missing keys as zero (e.g. FPKT DigiStix, EG Pulse).
-// When AuStateDoc is omitted, AUM instantiates the unit from
-// audioComponentDescription and leaves its own factory defaults intact. The
-// AuMainParam key is always present (empty unless n.AuMainParam is set),
-// matching the corpus.
+// only when n.StateDoc or n.StateValues carries saved fullState entries (e.g.
+// our plugins' probeMidiBrainProgram / probeAudioTapConfig, a captured default
+// state, or typed scalar preset keys): writing an identity-only AuStateDoc
+// causes AUM to call auAudioUnit.fullState with an empty state dictionary,
+// which zeroes out factory defaults on plugins whose setFullState: reads
+// missing keys as zero (e.g. FPKT DigiStix, EG Pulse). When AuStateDoc is
+// omitted, AUM instantiates the unit from audioComponentDescription and leaves
+// its own factory defaults intact. The AuMainParam key is always present (empty
+// unless n.AuMainParam is set), matching the corpus.
 //
 // componentIcon carries the plugin's icon when n.ComponentIcon holds the
 // stagebox app's on-device capture (the bytes of an NSKeyedArchiver-archived
@@ -101,7 +105,7 @@ func buildAUXNode(b *Builder, n NodeSpec, channel, slot int) map[string]any {
 		b.Intern(uint64(0)),                 // AuClockFactorPower
 		b.Intern(n.AuMainParam),             // AuMainParam (often "")
 	}
-	if len(n.StateDoc) > 0 {
+	if len(n.StateDoc) > 0 || len(n.StateValues) > 0 {
 		keys = append(keys, b.Intern("AuStateDoc"))
 		vals = append(vals, b.Intern(buildAuStateDoc(b, n)))
 	}
@@ -157,10 +161,10 @@ func graftComponentIcon(b *Builder, raw []byte) (UID, bool) {
 
 // buildAuStateDoc authors a node's AuStateDoc: the component identity tuple
 // (type/subtype/manufacturer as big-endian FourCC UInt32s, the form AUM stores)
-// plus version, plus the saved fullState blob entries from n.StateDoc (each a
-// vendor key -> raw bytes). Callers invoke it only when n.StateDoc is non-empty;
-// passing an identity-only dictionary to fullState zeroes parameters on plugins
-// whose setFullState: reads missing keys as zero.
+// plus version, plus any raw-byte entries from n.StateDoc and typed plist
+// values from n.StateValues. Callers invoke it only when n.StateDoc or
+// n.StateValues is non-empty; passing an identity-only dictionary to fullState
+// zeroes parameters on plugins whose setFullState: reads missing keys as zero.
 func buildAuStateDoc(b *Builder, n NodeSpec) map[string]any {
 	keys := []any{
 		b.Intern("type"),
@@ -178,7 +182,88 @@ func buildAuStateDoc(b *Builder, n NodeSpec) map[string]any {
 		keys = append(keys, b.Intern(k))
 		objs = append(objs, b.Intern(n.StateDoc[k]))
 	}
+	for _, k := range sortedKeys(n.StateValues) {
+		v, err := normalizeAuStateValue(n.StateValues[k])
+		if err != nil {
+			continue
+		}
+		keys = append(keys, b.Intern(k))
+		objs = append(objs, b.Intern(v))
+	}
 	return newNSDict(b, keys, objs)
+}
+
+func isAuStateIdentityKey(k string) bool {
+	switch k {
+	case "type", "subtype", "manufacturer", "version":
+		return true
+	}
+	return false
+}
+
+// normalizeAuStateValue validates and converts a typed AuStateDoc entry into
+// one of the concrete Go scalar/data types supported by Archive/plist encoding.
+func normalizeAuStateValue(v any) (any, error) {
+	switch x := v.(type) {
+	case string:
+		return x, nil
+	case bool:
+		return x, nil
+	case int:
+		return int64(x), nil
+	case int8:
+		return int64(x), nil
+	case int16:
+		return int64(x), nil
+	case int32:
+		return int64(x), nil
+	case int64:
+		return x, nil
+	case uint:
+		return uint64(x), nil
+	case uint8:
+		return uint64(x), nil
+	case uint16:
+		return uint64(x), nil
+	case uint32:
+		return uint64(x), nil
+	case uint64:
+		return x, nil
+	case float32:
+		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
+			return nil, fmt.Errorf("non-finite float32 %v", x)
+		}
+		return x, nil
+	case float64:
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return nil, fmt.Errorf("non-finite float64 %v", x)
+		}
+		return x, nil
+	case []byte:
+		return slices.Clone(x), nil
+	default:
+		return nil, fmt.Errorf("unsupported AuStateDoc value type %T (want string, bool, integer, float, or []byte)", v)
+	}
+}
+
+func validateNodeState(n NodeSpec) error {
+	for _, k := range sortedKeys(n.StateDoc) {
+		if isAuStateIdentityKey(k) {
+			return fmt.Errorf("StateDoc key %q conflicts with AuStateDoc identity key", k)
+		}
+	}
+	for _, k := range sortedKeys(n.StateValues) {
+		if isAuStateIdentityKey(k) {
+			return fmt.Errorf("StateValues key %q conflicts with AuStateDoc identity key", k)
+		}
+		if _, dup := n.StateDoc[k]; dup {
+			return fmt.Errorf("AuStateDoc key %q set in both StateDoc and StateValues", k)
+		}
+		if _, err := normalizeAuStateValue(n.StateValues[k]); err != nil {
+			return fmt.Errorf("StateValues[%q]: %w", k, err)
+		}
+	}
+	return nil
 }
 
 // --- Built-in routing nodes ----------------------------------------------

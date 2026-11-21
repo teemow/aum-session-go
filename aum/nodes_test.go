@@ -1,6 +1,8 @@
 package aum
 
 import (
+	"bytes"
+	"math"
 	"testing"
 
 	"github.com/teemow/midi-device/device"
@@ -113,6 +115,194 @@ func TestBuildAUXNodeOmitsEmptyAuStateDoc(t *testing.T) {
 		if _, ok := state[k]; !ok {
 			t.Fatalf("archiveNodeState missing key %q (got %v)", k, stateKeyList(state))
 		}
+	}
+}
+
+// TestBuildAUXNodeStateValues verifies typed scalar and byte values in
+// NodeSpec.StateValues survive BuildSession -> Encode -> Decode -> GraphEqual
+// and read back through NodeAuStateValues alongside the identity tuple.
+func TestBuildAUXNodeStateValues(t *testing.T) {
+	spec := BuildSpec{
+		Title: "EG Pulse State",
+		Channels: []ChannelSpec{{
+			Kind:  KindAudio,
+			Title: "EG Pulse",
+			Nodes: []NodeSpec{{
+				Component:     device.ProbeComponent{Type: "aumu", Subtype: "egdu", Manufacturer: "elga"},
+				ComponentName: "ElliottGarage: EG Pulse",
+				StateDoc:      map[string][]byte{"rawBlob": []byte("blob-bytes")},
+				StateValues: map[string]any{
+					"BankName":       "Soundtrack Loops EDM",
+					"Drumkit":        "SL EDM Kit",
+					"MasterVolume":   float64(0.5),
+					"BPM":            float64(120.0),
+					"CurrentPattern": int64(0),
+					"StepCount":      int(16),
+					"NegativeOffset": int(-3),
+					"Flags":          uint64(42),
+					"Gain32":         float32(0.75),
+					"HostSync":       false,
+					"SongEnabled":    true,
+					"ExtraData":      []byte{0x01, 0x02, 0x03},
+				},
+			}},
+		}},
+	}
+
+	s, _, err := BuildSession(spec)
+	if err != nil {
+		t.Fatalf("BuildSession: %v", err)
+	}
+	data, err := s.Archive().Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	re, err := Open(data)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !GraphEqual(s.Archive(), re.Archive()) {
+		t.Fatal("authored session with StateValues did not round-trip GraphEqual")
+	}
+
+	// Identity tuple is still written into AuStateDoc.
+	state, ok := re.nodeStateObj(0, 0)
+	if !ok {
+		t.Fatal("missing node state")
+	}
+	doc := re.rawObj(rawValue(re, state, "AuStateDoc"))
+	if doc == nil {
+		t.Fatal("missing AuStateDoc")
+	}
+	if got := re.scalarUint(rawValue(re, doc, "type")); got != fourCCToUint32("aumu") {
+		t.Fatalf("type = %d, want %d", got, fourCCToUint32("aumu"))
+	}
+	if got := re.scalarUint(rawValue(re, doc, "subtype")); got != fourCCToUint32("egdu") {
+		t.Fatalf("subtype = %d, want %d", got, fourCCToUint32("egdu"))
+	}
+	if got := re.scalarUint(rawValue(re, doc, "manufacturer")); got != fourCCToUint32("elga") {
+		t.Fatalf("manufacturer = %d, want %d", got, fourCCToUint32("elga"))
+	}
+	if got := re.scalarUint(rawValue(re, doc, "version")); got != 1 {
+		t.Fatalf("version = %d, want 1", got)
+	}
+
+	// NodeAuStateValues returns every non-identity key with its decoded type.
+	vals, err := re.NodeAuStateValues(0, 0)
+	if err != nil {
+		t.Fatalf("NodeAuStateValues: %v", err)
+	}
+	for _, k := range []string{"type", "subtype", "manufacturer", "version"} {
+		if _, exists := vals[k]; exists {
+			t.Errorf("identity key %q leaked into NodeAuStateValues", k)
+		}
+	}
+	if got, _ := vals["BankName"].(string); got != "Soundtrack Loops EDM" {
+		t.Errorf("BankName = %#v", vals["BankName"])
+	}
+	if got, _ := vals["Drumkit"].(string); got != "SL EDM Kit" {
+		t.Errorf("Drumkit = %#v", vals["Drumkit"])
+	}
+	if got, _ := vals["MasterVolume"].(float64); got != 0.5 {
+		t.Errorf("MasterVolume = %#v", vals["MasterVolume"])
+	}
+	if got, _ := vals["BPM"].(float64); got != 120.0 {
+		t.Errorf("BPM = %#v", vals["BPM"])
+	}
+	if got, ok := vals["HostSync"].(bool); !ok || got {
+		t.Errorf("HostSync = %#v", vals["HostSync"])
+	}
+	if got, ok := vals["SongEnabled"].(bool); !ok || !got {
+		t.Errorf("SongEnabled = %#v", vals["SongEnabled"])
+	}
+	if got := re.intOr(vals["CurrentPattern"], -1); got != 0 {
+		t.Errorf("CurrentPattern = %#v", vals["CurrentPattern"])
+	}
+	if got := re.intOr(vals["StepCount"], -1); got != 16 {
+		t.Errorf("StepCount = %#v", vals["StepCount"])
+	}
+	if got, ok := vals["NegativeOffset"].(int64); !ok || got != -3 {
+		t.Errorf("NegativeOffset = %#v", vals["NegativeOffset"])
+	}
+	if got := re.scalarUint(vals["Flags"]); got != 42 {
+		t.Errorf("Flags = %#v", vals["Flags"])
+	}
+	if got, ok := vals["Gain32"].(float32); !ok || got != 0.75 {
+		t.Errorf("Gain32 = %#v", vals["Gain32"])
+	}
+	if got, _ := vals["ExtraData"].([]byte); !bytes.Equal(got, []byte{0x01, 0x02, 0x03}) {
+		t.Errorf("ExtraData = %#v", vals["ExtraData"])
+	}
+	if got, _ := vals["rawBlob"].([]byte); string(got) != "blob-bytes" {
+		t.Errorf("rawBlob = %#v", vals["rawBlob"])
+	}
+
+	// NodeAuStateDoc still returns only []byte entries.
+	blobs, err := re.NodeAuStateDoc(0, 0)
+	if err != nil {
+		t.Fatalf("NodeAuStateDoc: %v", err)
+	}
+	if len(blobs) != 2 || string(blobs["rawBlob"]) != "blob-bytes" || !bytes.Equal(blobs["ExtraData"], []byte{0x01, 0x02, 0x03}) {
+		t.Fatalf("NodeAuStateDoc = %#v", blobs)
+	}
+}
+
+// TestBuildAUXNodeStateValuesValidation checks BuildSession rejects invalid
+// value types, non-finite floats, duplicate keys, and identity key collisions.
+func TestBuildAUXNodeStateValuesValidation(t *testing.T) {
+	baseNode := func(doc map[string][]byte, vals map[string]any) BuildSpec {
+		return BuildSpec{
+			Channels: []ChannelSpec{{
+				Kind:  KindAudio,
+				Title: "Test",
+				Nodes: []NodeSpec{{
+					Component:     device.ProbeComponent{Type: "aumu", Subtype: "egdu", Manufacturer: "elga"},
+					ComponentName: "EG Pulse",
+					StateDoc:      doc,
+					StateValues:   vals,
+				}},
+			}},
+		}
+	}
+
+	cases := map[string]BuildSpec{
+		"nil value":         baseNode(nil, map[string]any{"k": nil}),
+		"map value":         baseNode(nil, map[string]any{"k": map[string]any{}}),
+		"slice value":       baseNode(nil, map[string]any{"k": []string{"a"}}),
+		"NaN float64":       baseNode(nil, map[string]any{"k": math.NaN()}),
+		"Inf float64":       baseNode(nil, map[string]any{"k": math.Inf(1)}),
+		"Inf float32":       baseNode(nil, map[string]any{"k": float32(math.Inf(-1))}),
+		"duplicate key":     baseNode(map[string][]byte{"k": []byte("a")}, map[string]any{"k": "b"}),
+		"identity in vals":  baseNode(nil, map[string]any{"version": int64(2)}),
+		"identity in doc":   baseNode(map[string][]byte{"type": []byte("aumu")}, nil),
+		"invalid post node": {
+			Channels: []ChannelSpec{{
+				Kind:   KindAudio,
+				Title:  "Master",
+				Source: &ChannelSource{Kind: SourceBus, BusIndex: 0},
+				PostNodes: []NodeSpec{{
+					Component:   device.ProbeComponent{Type: "aufx", Subtype: "fx01", Manufacturer: "test"},
+					StateValues: map[string]any{"bad": struct{}{}},
+				}},
+			}},
+		},
+		"invalid tap node": {
+			Channels: []ChannelSpec{{
+				Kind:    KindAudio,
+				Title:   "Master",
+				Source:  &ChannelSource{Kind: SourceBus, BusIndex: 0},
+				Tap:     true,
+				TapNode: &NodeSpec{Component: ProbeTapNode().Component, StateValues: map[string]any{"bad": []int{1}}},
+			}},
+		},
+	}
+
+	for name, spec := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := BuildSession(spec); err == nil {
+				t.Fatalf("BuildSession(%s): expected error, got nil", name)
+			}
+		})
 	}
 }
 
