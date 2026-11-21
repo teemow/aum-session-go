@@ -83,6 +83,39 @@ func TestBuildAUXNodeShape(t *testing.T) {
 	}
 }
 
+// TestBuildAUXNodeOmitsEmptyAuStateDoc verifies that a hosted AUv3 node with
+// no StateDoc omits AuStateDoc from archiveNodeState rather than authoring an
+// identity-only fullState dictionary, which would otherwise cause AUM to invoke
+// auAudioUnit.fullState with missing vendor keys and wipe factory defaults on
+// plugins like FPKT DigiStix and EG Pulse.
+func TestBuildAUXNodeOmitsEmptyAuStateDoc(t *testing.T) {
+	a := &Archive{Archiver: "NSKeyedArchiver", Version: 100000, Objects: []any{"$null"}}
+	b := a.NewBuilder()
+	n := NodeSpec{
+		Component:     device.ProbeComponent{Type: "aumu", Subtype: "dmfx", Manufacturer: "FPKT"},
+		ComponentName: "FPKT: DigiStix",
+	}
+	node := buildAUXNode(b, n, 1, 0)
+	a.Top = map[string]any{"root": b.Intern(node)}
+	s := NewSession(a)
+
+	state := nsState(s, node)
+	if _, ok := state["AuStateDoc"]; ok {
+		t.Fatalf("archiveNodeState unexpectedly contains AuStateDoc for empty StateDoc: %v", stateKeyList(state))
+	}
+	if len(state) != len(aux13Keys)-1 {
+		t.Fatalf("archiveNodeState has %d keys, want %d: %v", len(state), len(aux13Keys)-1, stateKeyList(state))
+	}
+	for _, k := range aux13Keys {
+		if k == "AuStateDoc" {
+			continue
+		}
+		if _, ok := state[k]; !ok {
+			t.Fatalf("archiveNodeState missing key %q (got %v)", k, stateKeyList(state))
+		}
+	}
+}
+
 // TestFourCCToUint32 pins the AuStateDoc identity encoding against the values
 // the corpus stores.
 func TestFourCCToUint32(t *testing.T) {

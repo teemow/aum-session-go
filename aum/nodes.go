@@ -12,12 +12,12 @@ package aum
 // Two node families live here:
 //
 //   - Hosted AUv3 nodes (buildAUXNode): archiveDescClass "AUXNodeDescription",
-//     a 20-byte audioComponentDescription with componentFlags 0x0e, the full
-//     13-key archiveNodeState — the window/clock bookkeeping AUM always writes
-//     plus the AuStateDoc carrying the component identity tuple (and, for our
-//     own plugins, their saved fullState blob) — and, when the probe dump
-//     captured one, the plugin's componentIcon (an archived UIImage grafted in
-//     verbatim).
+//     a 20-byte audioComponentDescription with componentFlags 0x0e, the
+//     12-key archiveNodeState window/clock bookkeeping AUM always writes plus
+//     an optional AuStateDoc (included only when n.StateDoc has saved fullState
+//     entries, so plugins with no saved state keep their native factory
+//     defaults), and, when the probe dump captured one, the plugin's
+//     componentIcon (an archived UIImage grafted in verbatim).
 //
 //   - Built-in routing nodes (buildHWInput/HWOutput/BusDest/BusSource/BusSend,
 //     the FilePlayer source and the empty slot): light nodes with no component
@@ -51,11 +51,16 @@ const (
 
 // buildAUXNode authors one hosted AUv3 node (AUMNodeArchive) faithfully to what
 // AUM writes: the component identity (audioComponentDescription with flags
-// 0x0e), the human componentName, and the full 13-key archiveNodeState
-// including an AuStateDoc that carries the {type,subtype,manufacturer,version}
-// identity tuple plus any saved fullState blob from n.StateDoc (e.g. our
-// plugins' probeMidiBrainProgram / probeAudioTapConfig). The AuMainParam key is
-// always present (empty unless n.AuMainParam is set), matching the corpus.
+// 0x0e), the human componentName, and archiveNodeState. AuStateDoc is included
+// only when n.StateDoc carries saved fullState entries (e.g. our plugins'
+// probeMidiBrainProgram / probeAudioTapConfig, or a captured default state):
+// writing an identity-only AuStateDoc causes AUM to call auAudioUnit.fullState
+// with an empty state dictionary, which zeroes out factory defaults on plugins
+// whose setFullState: reads missing keys as zero (e.g. FPKT DigiStix, EG Pulse).
+// When AuStateDoc is omitted, AUM instantiates the unit from
+// audioComponentDescription and leaves its own factory defaults intact. The
+// AuMainParam key is always present (empty unless n.AuMainParam is set),
+// matching the corpus.
 //
 // componentIcon carries the plugin's icon when n.ComponentIcon holds the
 // stagebox app's on-device capture (the bytes of an NSKeyedArchiver-archived
@@ -68,38 +73,39 @@ const (
 // channel/slot are accepted for call-site symmetry with the other builders;
 // real AUM nodes carry no parentChannel/parentSlot, so they are not written.
 func buildAUXNode(b *Builder, n NodeSpec, channel, slot int) map[string]any {
-	state := newNSDict(b,
-		[]any{
-			b.Intern("AUMNode.AutoShow"),
-			b.Intern("AUMNode.LastZ"),
-			b.Intern("AUMNode.bypassed"),
-			b.Intern("AUMNode.prevWindowMode"),
-			b.Intern("AUMNode.stats.save_time"),
-			b.Intern("AUMNode.windowMode"),
-			b.Intern("AUMNode.windowPos"),
-			b.Intern("AUMNode.windowSize"),
-			b.Intern("AUMNode.windowTopOfs"),
-			b.Intern("AuClockFactorCustom"),
-			b.Intern("AuClockFactorPower"),
-			b.Intern("AuMainParam"),
-			b.Intern("AuStateDoc"),
-		},
-		[]any{
-			b.Intern(false),                     // AUMNode.AutoShow
-			b.Intern(uint64(0)),                 // AUMNode.LastZ
-			b.Intern(false),                     // AUMNode.bypassed
-			b.Intern(uint64(0)),                 // AUMNode.prevWindowMode
-			b.Intern(float64(0)),                // AUMNode.stats.save_time
-			b.Intern(uint64(2)),                 // AUMNode.windowMode
-			b.Intern(newNSPoint(b, "{93, 60}")), // AUMNode.windowPos
-			b.Intern(newNSSize(b, "{0, 0}")),    // AUMNode.windowSize
-			b.Intern(float64(60)),               // AUMNode.windowTopOfs
-			b.Intern(float64(1)),                // AuClockFactorCustom
-			b.Intern(uint64(0)),                 // AuClockFactorPower
-			b.Intern(n.AuMainParam),             // AuMainParam (often "")
-			b.Intern(buildAuStateDoc(b, n)),     // AuStateDoc
-		},
-	)
+	keys := []any{
+		b.Intern("AUMNode.AutoShow"),
+		b.Intern("AUMNode.LastZ"),
+		b.Intern("AUMNode.bypassed"),
+		b.Intern("AUMNode.prevWindowMode"),
+		b.Intern("AUMNode.stats.save_time"),
+		b.Intern("AUMNode.windowMode"),
+		b.Intern("AUMNode.windowPos"),
+		b.Intern("AUMNode.windowSize"),
+		b.Intern("AUMNode.windowTopOfs"),
+		b.Intern("AuClockFactorCustom"),
+		b.Intern("AuClockFactorPower"),
+		b.Intern("AuMainParam"),
+	}
+	vals := []any{
+		b.Intern(false),                     // AUMNode.AutoShow
+		b.Intern(uint64(0)),                 // AUMNode.LastZ
+		b.Intern(false),                     // AUMNode.bypassed
+		b.Intern(uint64(0)),                 // AUMNode.prevWindowMode
+		b.Intern(float64(0)),                // AUMNode.stats.save_time
+		b.Intern(uint64(2)),                 // AUMNode.windowMode
+		b.Intern(newNSPoint(b, "{93, 60}")), // AUMNode.windowPos
+		b.Intern(newNSSize(b, "{0, 0}")),    // AUMNode.windowSize
+		b.Intern(float64(60)),               // AUMNode.windowTopOfs
+		b.Intern(float64(1)),                // AuClockFactorCustom
+		b.Intern(uint64(0)),                 // AuClockFactorPower
+		b.Intern(n.AuMainParam),             // AuMainParam (often "")
+	}
+	if len(n.StateDoc) > 0 {
+		keys = append(keys, b.Intern("AuStateDoc"))
+		vals = append(vals, b.Intern(buildAuStateDoc(b, n)))
+	}
+	state := newNSDict(b, keys, vals)
 
 	fields := map[string]any{
 		"archiveDescClass": b.Intern(classAUXNode),
@@ -151,10 +157,10 @@ func graftComponentIcon(b *Builder, raw []byte) (UID, bool) {
 
 // buildAuStateDoc authors a node's AuStateDoc: the component identity tuple
 // (type/subtype/manufacturer as big-endian FourCC UInt32s, the form AUM stores)
-// plus version, plus any saved fullState blob entries from n.StateDoc (each a
-// vendor key -> raw bytes). This mirrors the shape every AUv3 node in the corpus
-// carries; for a third-party synth (no StateDoc) it is just the identity, which
-// is enough for AUM to recognise the node.
+// plus version, plus the saved fullState blob entries from n.StateDoc (each a
+// vendor key -> raw bytes). Callers invoke it only when n.StateDoc is non-empty;
+// passing an identity-only dictionary to fullState zeroes parameters on plugins
+// whose setFullState: reads missing keys as zero.
 func buildAuStateDoc(b *Builder, n NodeSpec) map[string]any {
 	keys := []any{
 		b.Intern("type"),
