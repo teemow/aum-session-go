@@ -739,10 +739,10 @@ func BuildSession(spec BuildSpec) (*Session, BuildReport, error) {
 }
 
 // buildNode builds one AUMNodeArchive for a hosted AUv3 node. It delegates to
-// buildAUXNode (nodes.go), the corpus-faithful primitive that authors the full
-// 13-key archiveNodeState, componentFlags 0x0e and the AuStateDoc identity (+
-// any n.StateDoc fullState blob) — the shape AUM must see to instantiate the
-// node on load.
+// buildAUXNode (nodes.go), the corpus-faithful primitive that authors the
+// archiveNodeState bookkeeping, componentFlags 0x0e, and (when n.StateDoc is
+// non-empty) AuStateDoc — the shape AUM must see to instantiate the node on
+// load while preserving native factory defaults when no state is saved.
 func buildNode(b *Builder, n NodeSpec, channel, slot int) map[string]any {
 	return buildAUXNode(b, n, channel, slot)
 }
