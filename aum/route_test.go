@@ -1,6 +1,8 @@
 package aum
 
 import (
+	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/teemow/midi-device/device"
@@ -213,6 +215,41 @@ func TestSetAndNodeAuStateValues(t *testing.T) {
 	}
 	if _, err := re.NodeAuStateValues(9, 9); err == nil {
 		t.Error("expected error for missing node in NodeAuStateValues")
+	}
+}
+
+// TestSetAuStateValuesKeepsFloat32BesideDoubles writes a plugin's Float
+// settings into a session that already holds a Double 0.0 (as every authored
+// session does). Each comes back as the width it was written with: a plugin
+// that saved a Float 0 gets a Float, not a Double.
+func TestSetAuStateValuesKeepsFloat32BesideDoubles(t *testing.T) {
+	s, _, err := BuildSession(loopSpec())
+	if err != nil {
+		t.Fatalf("BuildSession: %v", err)
+	}
+	if !slices.Contains(s.Archive().Objects, any(float64(0))) {
+		t.Fatal("the session holds no Double 0.0 to be confused with")
+	}
+	want := map[string]any{"attack": float32(0), "volume": float32(12), "gain": float64(0), "offset": int64(-1)}
+	if err := s.SetAuStateValues(1, 0, want); err != nil {
+		t.Fatalf("SetAuStateValues: %v", err)
+	}
+	data, err := s.Archive().Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	re, err := Open(data)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	got, err := re.NodeAuStateValues(1, 0)
+	if err != nil {
+		t.Fatalf("NodeAuStateValues: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		for k, v := range want {
+			t.Errorf("%s = %T %v, want %T %v", k, got[k], got[k], v, v)
+		}
 	}
 }
 

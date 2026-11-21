@@ -231,6 +231,38 @@ func TestBuilderInterns(t *testing.T) {
 	}
 }
 
+// TestBuilderInternKeepsPlistNumberKindsApart checks that two numbers share
+// a slot only when the binary plist writes them alike: a float32 is a 4-byte
+// real and a float64 an 8-byte one, -0.0 is not 0.0, and a negative int64 is
+// not the uint64 with the same bits.
+func TestBuilderInternKeepsPlistNumberKindsApart(t *testing.T) {
+	a := &Archive{Objects: []any{"$null", float64(0), int64(5)}}
+	b := a.NewBuilder()
+
+	if got := b.Intern(float64(0)); got != UID(1) {
+		t.Fatalf("Intern(float64 0) = %d, want the existing slot 1", got)
+	}
+	f32 := b.Intern(float32(0))
+	if f32 == UID(1) {
+		t.Fatal("a float32 0 reused the float64 0.0 slot: it would be written as a double")
+	}
+	if _, ok := a.Objects[f32].(float32); !ok {
+		t.Fatalf("slot %d holds %T, want float32", f32, a.Objects[f32])
+	}
+	if again := b.Intern(float32(0)); again != f32 {
+		t.Fatalf("repeat Intern(float32 0) = %d, want %d (dedupe)", again, f32)
+	}
+	if neg := b.Intern(math.Copysign(0, -1)); neg == UID(1) {
+		t.Fatal("-0.0 reused the 0.0 slot")
+	}
+	if got := b.Intern(uint64(5)); got != UID(2) {
+		t.Fatalf("Intern(uint64 5) = %d, want the int64 5 slot 2: the plist writes them alike", got)
+	}
+	if b.Intern(int64(-1)) == b.Intern(uint64(math.MaxUint64)) {
+		t.Fatal("int64 -1 and uint64 18446744073709551615 share a slot")
+	}
+}
+
 func TestMutateThenEncode(t *testing.T) {
 	a := syntheticSession()
 

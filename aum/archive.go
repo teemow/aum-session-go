@@ -449,15 +449,24 @@ func (b *Builder) graftConcrete(src *Archive, obj any, memo map[UID]UID) any {
 	}
 }
 
-// internKey is a comparable identity for an internable object.
+// internKey is a comparable identity for an internable object. Two objects
+// share a key only when the binary plist encodes them alike, so interning one
+// never changes what the other is written as.
 type internKey struct {
 	tag byte
 	s   string
 	n   uint64
-	f   float64
 	b   bool
 }
 
+// makeInternKey keys an object by what the binary plist writes for it:
+//
+//   - Integers by value: an int64 that is not negative and a uint64 of the
+//     same value are the same plist integer. A negative int64 has a key of its
+//     own, so -1 does not meet the uint64 18446744073709551615.
+//   - Reals by width and bits: a float32 is a 4-byte real and a float64 an
+//     8-byte one, so a plugin's saved Float 0 stays a Float beside a session's
+//     Double 0.0; bits also keep -0.0 apart from 0.0.
 func makeInternKey(obj any) (internKey, bool) {
 	switch v := obj.(type) {
 	case string:
@@ -469,11 +478,14 @@ func makeInternKey(obj any) (internKey, bool) {
 	case uint64:
 		return internKey{tag: 'i', n: v}, true
 	case int64:
+		if v < 0 {
+			return internKey{tag: '-', n: uint64(v)}, true
+		}
 		return internKey{tag: 'i', n: uint64(v)}, true
 	case float32:
-		return internKey{tag: 'f', f: float64(v)}, true
+		return internKey{tag: 'f', n: uint64(math.Float32bits(v))}, true
 	case float64:
-		return internKey{tag: 'f', f: v}, true
+		return internKey{tag: 'F', n: math.Float64bits(v)}, true
 	case UID:
 		return internKey{tag: 'u', n: uint64(v)}, true
 	default:
