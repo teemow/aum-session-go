@@ -266,15 +266,20 @@ func TestBuildAUXNodeStateValuesValidation(t *testing.T) {
 	}
 
 	cases := map[string]BuildSpec{
-		"nil value":         baseNode(nil, map[string]any{"k": nil}),
-		"map value":         baseNode(nil, map[string]any{"k": map[string]any{}}),
-		"slice value":       baseNode(nil, map[string]any{"k": []string{"a"}}),
-		"NaN float64":       baseNode(nil, map[string]any{"k": math.NaN()}),
-		"Inf float64":       baseNode(nil, map[string]any{"k": math.Inf(1)}),
-		"Inf float32":       baseNode(nil, map[string]any{"k": float32(math.Inf(-1))}),
-		"duplicate key":     baseNode(map[string][]byte{"k": []byte("a")}, map[string]any{"k": "b"}),
-		"identity in vals":  baseNode(nil, map[string]any{"version": int64(2)}),
-		"identity in doc":   baseNode(map[string][]byte{"type": []byte("aumu")}, nil),
+		"nil value":        baseNode(nil, map[string]any{"k": nil}),
+		"nested nil value": baseNode(nil, map[string]any{"k": map[string]any{"x": nil}}),
+		"typed map value":  baseNode(nil, map[string]any{"k": map[string]int{"x": 1}}),
+		"opaque value":     baseNode(nil, map[string]any{"k": Array{Items: []any{Opaque{Class: "NSDate"}}}}),
+		"bad dict class":   baseNode(nil, map[string]any{"k": Dict{Class: "NSArray"}}),
+		"dict key twice":   baseNode(nil, map[string]any{"k": Dict{Keys: []string{"a", "a"}, Values: []any{"x", "y"}}}),
+		"dict keys short":  baseNode(nil, map[string]any{"k": Dict{Keys: []string{"a"}}}),
+		"slice value":      baseNode(nil, map[string]any{"k": []string{"a"}}),
+		"NaN float64":      baseNode(nil, map[string]any{"k": math.NaN()}),
+		"Inf float64":      baseNode(nil, map[string]any{"k": math.Inf(1)}),
+		"Inf float32":      baseNode(nil, map[string]any{"k": float32(math.Inf(-1))}),
+		"duplicate key":    baseNode(map[string][]byte{"k": []byte("a")}, map[string]any{"k": "b"}),
+		"identity in vals": baseNode(nil, map[string]any{"version": int64(2)}),
+		"identity in doc":  baseNode(map[string][]byte{"type": []byte("aumu")}, nil),
 		"invalid post node": {
 			Channels: []ChannelSpec{{
 				Kind:   KindAudio,

@@ -34,7 +34,6 @@ package aum
 
 import (
 	"fmt"
-	"math"
 	"slices"
 )
 
@@ -188,7 +187,7 @@ func buildAuStateDoc(b *Builder, n NodeSpec) map[string]any {
 			continue
 		}
 		keys = append(keys, b.Intern(k))
-		objs = append(objs, b.Intern(v))
+		objs = append(objs, internAuStateValue(b, v))
 	}
 	return newNSDict(b, keys, objs)
 }
@@ -199,51 +198,6 @@ func isAuStateIdentityKey(k string) bool {
 		return true
 	}
 	return false
-}
-
-// normalizeAuStateValue validates and converts a typed AuStateDoc entry into
-// one of the concrete Go scalar/data types supported by Archive/plist encoding.
-func normalizeAuStateValue(v any) (any, error) {
-	switch x := v.(type) {
-	case string:
-		return x, nil
-	case bool:
-		return x, nil
-	case int:
-		return int64(x), nil
-	case int8:
-		return int64(x), nil
-	case int16:
-		return int64(x), nil
-	case int32:
-		return int64(x), nil
-	case int64:
-		return x, nil
-	case uint:
-		return uint64(x), nil
-	case uint8:
-		return uint64(x), nil
-	case uint16:
-		return uint64(x), nil
-	case uint32:
-		return uint64(x), nil
-	case uint64:
-		return x, nil
-	case float32:
-		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
-			return nil, fmt.Errorf("non-finite float32 %v", x)
-		}
-		return x, nil
-	case float64:
-		if math.IsNaN(x) || math.IsInf(x, 0) {
-			return nil, fmt.Errorf("non-finite float64 %v", x)
-		}
-		return x, nil
-	case []byte:
-		return slices.Clone(x), nil
-	default:
-		return nil, fmt.Errorf("unsupported AuStateDoc value type %T (want string, bool, integer, float, or []byte)", v)
-	}
 }
 
 func validateNodeState(n NodeSpec) error {

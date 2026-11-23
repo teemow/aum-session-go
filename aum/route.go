@@ -334,10 +334,10 @@ func (s *Session) SetAuStateDoc(channelIndex, slot int, entries map[string][]byt
 }
 
 // SetAuStateValues sets a hosted node's saved AU state (archiveNodeState
-// ["AuStateDoc"]) from typed plist values (string, bool, integer, float, or
-// []byte). Values are validated and normalized the same way as
-// NodeSpec.StateValues; AUM hands the resulting dictionary to the plugin's
-// fullState setter on load.
+// ["AuStateDoc"]) from typed plist values (string, bool, integer, float,
+// []byte, or a Dict or Array of them). Values are validated and normalized the
+// same way as NodeSpec.StateValues; AUM hands the resulting dictionary to the
+// plugin's fullState setter on load.
 func (s *Session) SetAuStateValues(channelIndex, slot int, entries map[string]any) error {
 	if len(entries) == 0 {
 		return fmt.Errorf("aum: SetAuStateValues needs at least one entry")
@@ -364,7 +364,7 @@ func (s *Session) SetAuStateValues(channelIndex, slot int, entries map[string]an
 	oUIDs := make([]any, 0, len(keys))
 	for i, k := range keys {
 		kUIDs = append(kUIDs, b.Intern(k))
-		oUIDs = append(oUIDs, b.Intern(norm[i]))
+		oUIDs = append(oUIDs, internAuStateValue(b, norm[i]))
 	}
 	doc := newNSDict(b, kUIDs, oUIDs)
 	s.setField(state, "AuStateDoc", doc)
@@ -374,8 +374,10 @@ func (s *Session) SetAuStateValues(channelIndex, slot int, entries map[string]an
 // NodeAuStateValues returns all non-identity entries of a hosted node's
 // archiveNodeState["AuStateDoc"] with their decoded Go values (dropping the
 // {type,subtype,manufacturer,version} identity keys). Byte-slice values are
-// copied. A node without AuStateDoc or with identity keys only returns an empty
-// (non-nil) map.
+// copied. A nested dictionary or array is a Dict or Array, in the archive's
+// order and class, which NodeSpec.StateValues and SetAuStateValues write back
+// as it was saved; an object of another class is an Opaque. A node without
+// AuStateDoc or with identity keys only returns an empty (non-nil) map.
 func (s *Session) NodeAuStateValues(channelIndex, slot int) (map[string]any, error) {
 	state, ok := s.nodeStateObj(channelIndex, slot)
 	if !ok {
@@ -391,13 +393,7 @@ func (s *Session) NodeAuStateValues(channelIndex, slot int) (map[string]any, err
 		if isAuStateIdentityKey(k) {
 			continue
 		}
-		val := s.a.Deref(v)
-		if b, ok := val.([]byte); ok {
-			cp := make([]byte, len(b))
-			copy(cp, b)
-			val = cp
-		}
-		out[k] = val
+		out[k] = decodeAuStateValue(s.a, v, map[UID]bool{})
 	}
 	return out, nil
 }

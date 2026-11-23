@@ -240,10 +240,13 @@ type NodeSpec struct {
 	// StateValues, when non-empty, adds typed plist values to the node's
 	// archiveNodeState["AuStateDoc"] alongside StateDoc (e.g. plugins whose
 	// fullState stores strings, booleans, numbers or raw bytes directly rather
-	// than a single opaque blob). Supported value types: string, bool, int,
-	// int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32,
-	// float64, []byte. Keys must not duplicate StateDoc or the component
-	// identity keys (type, subtype, manufacturer, version).
+	// than a single opaque blob, or a whole patch in nested dictionaries).
+	// Supported value types: string, bool, int, int8, int16, int32, int64,
+	// uint, uint8, uint16, uint32, uint64, float32, float64, []byte, and Dict
+	// and Array of them (map[string]any and []any too, as mutable containers;
+	// see state_value.go). A value NodeAuStateValues read is written back as
+	// it was saved. Keys must not duplicate StateDoc or the component identity
+	// keys (type, subtype, manufacturer, version).
 	StateValues map[string]any
 	// Preset, when non-nil, sets the node's AuPresetCtrl (factory preset index).
 	Preset *int
